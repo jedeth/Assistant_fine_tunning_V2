@@ -57,14 +57,13 @@ def pseudonymiser_texte(nlp, texte_original):
     """
     doc = nlp(texte_original)
     
-    texte_modifie = list(texte_original) # Convertit en liste de caractères pour modification facile
     correspondances = {}
     pseudonyme_compteur = 1
     
     entites_a_remplacer = []
 
     for entite in doc.ents:
-        if entite.label_ == "PER": # Si l'entité est une personne
+        if entite.label_ == "PER": 
             nom_original = entite.text
             
             if nom_original not in correspondances:
@@ -74,29 +73,20 @@ def pseudonymiser_texte(nlp, texte_original):
             else:
                 pseudonyme = correspondances[nom_original]
             
-            # On stocke l'entité et son pseudonyme pour le remplacement
-            # (start_char, end_char, pseudonyme)
             entites_a_remplacer.append((entite.start_char, entite.end_char, pseudonyme))
 
-    # Trier les entités par position de début en ordre inverse
-    # pour éviter les problèmes d'indices lors du remplacement
     entites_a_remplacer.sort(key=lambda x: x[0], reverse=True)
     
     nouveau_texte_parts = []
     dernier_index_traite = len(texte_original)
 
     for start_char, end_char, pseudonyme in entites_a_remplacer:
-        # Ajouter la partie du texte après la dernière entité remplacée (ou depuis la fin)
         if end_char < dernier_index_traite:
             nouveau_texte_parts.append(texte_original[end_char:dernier_index_traite])
-        # Ajouter le pseudonyme
         nouveau_texte_parts.append(pseudonyme)
         dernier_index_traite = start_char
     
-    # Ajouter la partie initiale du texte (avant la première entité)
     nouveau_texte_parts.append(texte_original[0:dernier_index_traite])
-    
-    # Reconstruire le texte final en inversant l'ordre des parties
     texte_pseudonymise_final = "".join(reversed(nouveau_texte_parts))
             
     return texte_pseudonymise_final, correspondances
@@ -104,29 +94,57 @@ def pseudonymiser_texte(nlp, texte_original):
 # --- Programme Principal ---
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pseudonymise un fichier texte en utilisant un modèle SpaCy fine-tuné.")
-    parser.add_argument("--input", required=True, help="Chemin vers le fichier .txt à pseudonymiser.")
-    parser.add_argument("--output_txt", required=True, help="Chemin vers le fichier .txt de sortie (texte pseudonymisé).")
-    parser.add_argument("--output_json", required=True, help="Chemin vers le fichier .json de sortie (table de correspondance).")
+    parser.add_argument("--input", help="Chemin vers le fichier .txt à pseudonymiser.")
+    parser.add_argument("--output_txt", help="Chemin vers le fichier .txt de sortie (texte pseudonymisé).")
+    parser.add_argument("--output_json", help="Chemin vers le fichier .json de sortie (table de correspondance).")
     parser.add_argument("--modele", default=CHEMIN_MODELE_PAR_DEFAUT, help=f"Chemin vers le dossier du modèle SpaCy fine-tuné (défaut: {CHEMIN_MODELE_PAR_DEFAUT}).")
     
     args = parser.parse_args()
     
+    chemin_input = args.input
+    chemin_output_txt = args.output_txt
+    chemin_output_json = args.output_json
+
+    # Demander le chemin du fichier d'entrée s'il n'est pas fourni
+    if not chemin_input:
+        while not chemin_input:
+            chemin_input = input("Veuillez entrer le chemin vers le fichier .txt à pseudonymiser : ")
+            if not chemin_input:
+                print("Le chemin du fichier d'entrée ne peut pas être vide.")
+            elif not os.path.isfile(chemin_input):
+                print(f"Fichier non trouvé : {chemin_input}. Veuillez vérifier le chemin.")
+                chemin_input = "" # Réinitialiser pour redemander
+
+    # Proposer des noms par défaut pour les fichiers de sortie si non fournis
+    nom_base_input, extension_input = os.path.splitext(os.path.basename(chemin_input))
+    dossier_input = os.path.dirname(chemin_input)
+
+    if not chemin_output_txt:
+        suggestion_output_txt = os.path.join(dossier_input, f"{nom_base_input}_pseudonymise.txt")
+        reponse = input(f"Chemin pour le fichier .txt de sortie (défaut: {suggestion_output_txt}): ")
+        chemin_output_txt = reponse if reponse else suggestion_output_txt
+    
+    if not chemin_output_json:
+        suggestion_output_json = os.path.join(dossier_input, f"{nom_base_input}_correspondances.json")
+        reponse = input(f"Chemin pour le fichier .json de sortie (défaut: {suggestion_output_json}): ")
+        chemin_output_json = reponse if reponse else suggestion_output_json
+
     # 1. Charger le modèle
     nlp_modele = charger_modele_spacy(args.modele)
     if not nlp_modele:
-        exit() # Arrête le script si le modèle ne peut pas être chargé
+        exit() 
         
     # 2. Lire le fichier d'entrée
-    texte_a_traiter = lire_fichier_texte(args.input)
+    texte_a_traiter = lire_fichier_texte(chemin_input)
     if not texte_a_traiter:
         exit()
         
     # 3. Pseudonymiser
-    print("Pseudonymisation en cours...")
+    print("\nPseudonymisation en cours...")
     texte_resultat, table_correspondance = pseudonymiser_texte(nlp_modele, texte_a_traiter)
     
     # 4. Écrire les fichiers de sortie
-    ecrire_fichier_texte(texte_resultat, args.output_txt)
-    ecrire_fichier_json(table_correspondance, args.output_json)
+    ecrire_fichier_texte(texte_resultat, chemin_output_txt)
+    ecrire_fichier_json(table_correspondance, chemin_output_json)
     
     print("\nPseudonymisation terminée !")
