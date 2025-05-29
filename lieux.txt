@@ -1,0 +1,59 @@
+Boulogne-Billancourt
+Nanterre
+Courbevoie
+Colombes
+Asnières-sur-Seine
+Rueil-Malmaison
+Issy-les-Moulineaux
+Levallois-Perret
+Antony
+Neuilly-sur-Seine
+Clichy
+Clamart
+Montrouge
+Meudon
+Suresnes
+Puteaux
+Gennevilliers
+Bagneux
+Département de la Seine-Saint-Denis (93) - Très proche banlieue Nord et Est :
+19. Saint-Denis
+20. Montreuil
+21. Aulnay-sous-Bois
+22. Aubervilliers
+23. Drancy
+24. Noisy-le-Grand
+25. Pantin
+26. Bobigny
+27. Bondy
+28. Épinay-sur-Seine
+29. Le Blanc-Mesnil
+30. Sevran
+
+Département du Val-de-Marne (94) - Très proche banlieue Sud et Est :
+31. Créteil
+32. Vitry-sur-Seine
+33. Champigny-sur-Marne
+34. Saint-Maur-des-Fossés
+35. Ivry-sur-Seine
+36. Maisons-Alfort
+37. Fontenay-sous-Bois
+38. Vincennes
+39. Alfortville
+40. Choisy-le-Roi
+
+Département de l'Essonne (91) - Banlieue plus éloignée au Sud :
+41. Évry-Courcouronnes
+42. Corbeil-Essonnes
+43. Massy
+44. Savigny-sur-Orge
+45. Palaiseau
+
+Département des Yvelines (78) - Banlieue plus éloignée à l'Ouest :
+46. Versailles
+47. Sartrouville
+48. Mantes-la-Jolie
+49. Saint-Germain-en-Laye
+
+Département du Val-d'Oise (95) - Banlieue plus éloignée au Nord :
+50. Argenteuil
