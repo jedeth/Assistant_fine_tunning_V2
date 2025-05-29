@@ -287,21 +287,23 @@ def sauvegarder_texte_resultat():
         return
 
     # Obtenir le chemin du fichier de test original pour suggérer un nom
-    chemin_fichier_test_original = var_chemin_fichier_test.get()
-    nom_initial_suggerere = "resultat_pseudonymise.txt" # Nom par défaut si l'original n'est pas dispo
+    chemin_fichier_test_original = var_chemin_fichier_test.get() # var_chemin_fichier_test est la variable Tkinter liée à l'entrée du fichier de test
+    nom_initial_suggerere = "resultat_pseudonymise.txt" # Nom par défaut si l'original n'est pas disponible
 
-    if chemin_fichier_test_original:
+    if chemin_fichier_test_original and os.path.exists(chemin_fichier_test_original): # Vérifier si le chemin est valide
         nom_base = os.path.basename(chemin_fichier_test_original)
-        nom_sans_ext, extension = os.path.splitext(nom_base)
-        nom_initial_suggerere = f"{nom_sans_ext}_pseudonymise.txt" # Suggestion de nom
-
+        nom_sans_ext, extension_originale = os.path.splitext(nom_base) # extension_originale pourrait être .txt
+        nom_initial_suggerere = f"{nom_sans_ext}_pseudonymise.txt" # Suggestion de nom claire avec .txt
+    
+    # Ouvrir la boîte de dialogue "Enregistrer sous..."
     chemin_fichier = filedialog.asksaveasfilename(
         title="Sauvegarder le texte pseudonymisé",
-        initialfile=nom_initial_suggerere, # Voici l'ajout pour le nom suggéré
+        initialfile=nom_initial_suggerere, # Le nom de fichier suggéré apparaîtra ici
         defaultextension=".txt",
         filetypes=(("Fichiers Texte", "*.txt"), ("Tous les fichiers", "*.*"))
     )
     
+    # Si l'utilisateur a choisi un chemin et cliqué sur "Enregistrer" (chemin_fichier ne sera pas vide)
     if chemin_fichier:
         try:
             with open(chemin_fichier, 'w', encoding='utf-8') as f:
@@ -309,7 +311,7 @@ def sauvegarder_texte_resultat():
             messagebox.showinfo("Succès", f"Texte pseudonymisé sauvegardé dans : {chemin_fichier}")
         except Exception as e:
             messagebox.showerror("Erreur Sauvegarde", f"Impossible de sauvegarder le fichier : {e}")
-
+    # Si l'utilisateur annule la boîte de dialogue, chemin_fichier sera vide et rien ne se passera.
 def sauvegarder_mapping_resultat():
     global mapping_pseudonymes_actuel
     if not mapping_pseudonymes_actuel:
