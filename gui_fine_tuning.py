@@ -4,231 +4,300 @@ import subprocess
 import spacy
 from spacy.training.example import Example
 import os
-import json # Changé re en json car re n'était plus utilisé après suppression de generer_donnees_entrainement_interne
+import re 
+import json
 import random
 
-# --- Logique de Pseudonymisation (adaptée de pseudonymiser_texte.py) ---
+# --- Logique de Pseudonymisation ---
 def pseudonymiser_texte_pour_gui(nlp_model, texte_original):
-    """
-    Pseudonymise le texte en utilisant le modèle SpaCy chargé.
-    Retourne le texte pseudonymisé et la table de correspondance.
-    """
-    if not nlp_model:
-        messagebox.showerror("Erreur Modèle", "Le modèle SpaCy n'est pas chargé pour la pseudonymisation.")
-        return None, None
-
-    doc = nlp_model(texte_original)
-    
-    correspondances = {}
-    pseudonyme_compteur = 1
-    
-    entites_a_remplacer = []
-
+    if not nlp_model: messagebox.showerror("Erreur Modèle", "Modèle SpaCy non chargé."); return None, None
+    doc = nlp_model(texte_original); correspondances = {}; compteur = 1; ent_remplacer = []
     for entite in doc.ents:
         if entite.label_ == "PER": 
-            nom_original = entite.text.strip() # Ajout de strip() pour la cohérence
-            
-            if nom_original not in correspondances:
-                pseudonyme = f"[PERSONNE_{pseudonyme_compteur}]"
-                correspondances[nom_original] = pseudonyme
-                pseudonyme_compteur += 1
-            else:
-                pseudonyme = correspondances[nom_original]
-            
-            entites_a_remplacer.append((entite.start_char, entite.end_char, pseudonyme))
+            nom_o = entite.text.strip() 
+            if nom_o not in correspondances: pseudo = f"[PERSONNE_{compteur}]"; correspondances[nom_o] = pseudo; compteur += 1
+            else: pseudo = correspondances[nom_o]
+            ent_remplacer.append((entite.start_char, entite.end_char, pseudo))
+    ent_remplacer.sort(key=lambda x: x[0], reverse=True)
+    parts = []; last_idx = len(texte_original)
+    for start, end, pseudo in ent_remplacer:
+        if end < last_idx: parts.append(texte_original[end:last_idx])
+        parts.append(pseudo); last_idx = start
+    parts.append(texte_original[0:last_idx])
+    return "".join(reversed(parts)), correspondances
 
-    entites_a_remplacer.sort(key=lambda x: x[0], reverse=True)
-    
-    nouveau_texte_parts = []
-    dernier_index_traite = len(texte_original)
+# --- Fonctions de préparation de données ---
+def lire_entites_depuis_fichier(chemin_fichier, log_callback=None):
+    entites = []
+    try:
+        with open(chemin_fichier, 'r', encoding='utf-8') as f:
+            for ligne in f:
+                entite_texte = ligne.strip()
+                if entite_texte: entites.append(entite_texte)
+        if not entites and log_callback: log_callback(f"A: Aucun contenu: {chemin_fichier}")
+        return entites
+    except FileNotFoundError:
+        msg = f"ERR: Fichier entités '{chemin_fichier}' introuvable."
+        if log_callback: log_callback(msg); return None
+        else: messagebox.showerror("Erreur Fichier", msg); return None
+    except Exception as e:
+        msg = f"ERR lecture entités '{chemin_fichier}': {e}"
+        if log_callback: log_callback(msg); return None
+        else: messagebox.showerror("Erreur Lecture", msg); return None
 
-    for start_char, end_char, pseudonyme in entites_a_remplacer:
-        if end_char < dernier_index_traite:
-            nouveau_texte_parts.append(texte_original[end_char:dernier_index_traite])
-        nouveau_texte_parts.append(pseudonyme)
-        dernier_index_traite = start_char
-    
-    nouveau_texte_parts.append(texte_original[0:dernier_index_traite])
-    texte_pseudonymise_final = "".join(reversed(nouveau_texte_parts))
-            
-    return texte_pseudonymise_final, correspondances
+def lire_phrases_modeles_specifiques(chemin_fichier_phrases, placeholder_attendu, log_callback=None):
+    phrases = []
+    try:
+        with open(chemin_fichier_phrases, 'r', encoding='utf-8') as f:
+            for ligne_num, ligne in enumerate(f, 1):
+                phrase_modele = ligne.strip()
+                if phrase_modele.startswith('"') and phrase_modele.endswith('",'): phrase_modele = phrase_modele[1:-2]
+                elif phrase_modele.startswith("'") and phrase_modele.endswith("',"): phrase_modele = phrase_modele[1:-2]
+                elif phrase_modele.startswith('"') and phrase_modele.endswith('"'): phrase_modele = phrase_modele[1:-1]
+                elif phrase_modele.startswith("'") and phrase_modele.endswith("'"): phrase_modele = phrase_modele[1:-1]
+                if phrase_modele and placeholder_attendu in phrase_modele: phrases.append(phrase_modele)
+                elif phrase_modele and log_callback: log_callback(f"L{ligne_num} ({os.path.basename(chemin_fichier_phrases)}): Placeholder '{placeholder_attendu}' manquant.")
+        if not phrases and log_callback: log_callback(f"A: Aucun modèle phrase pour '{placeholder_attendu}' dans : {os.path.basename(chemin_fichier_phrases)}")
+        return phrases
+    except FileNotFoundError:
+        msg = f"ERR: Fichier phrases '{chemin_fichier_phrases}' introuvable."
+        if log_callback: log_callback(msg); return None
+        else: messagebox.showerror("Erreur Fichier", msg); return None
+    except Exception as e:
+        msg = f"ERR lecture phrases '{chemin_fichier_phrases}': {e}"
+        if log_callback: log_callback(msg); return None
+        else: messagebox.showerror("Erreur Lecture", msg); return None
 
-# --- Fonctions de chargement de données (pour le fine-tuning) ---
+def generer_donnees_pour_type(liste_entites, liste_phrases_modeles, label_entite, placeholder, log_callback=None):
+    donnees_entrainement = []
+    if not liste_entites or not liste_phrases_modeles:
+        if log_callback: log_callback(f"Données sources vides pour '{label_entite}'.")
+        return donnees_entrainement
+    for entite_texte in liste_entites:
+        for phrase_modele in liste_phrases_modeles:
+            phrase_formatee = phrase_modele.replace(placeholder, entite_texte)
+            match = re.search(re.escape(entite_texte), phrase_formatee)
+            if match:
+                debut, fin = match.span()
+                entite_spacy = (debut, fin, label_entite)
+                donnees_entrainement.append((phrase_formatee, {"entities": [entite_spacy]}))
+            elif log_callback:
+                log_callback(f"Entité '{entite_texte}' ({label_entite}) non trouvée.")
+    return donnees_entrainement
+
+def sauvegarder_donnees_json(donnees, chemin_fichier_sortie, log_callback=None):
+    if not donnees:
+        if log_callback: log_callback(f"Aucune donnée à sauvegarder pour '{chemin_fichier_sortie}'.")
+        return False
+    try:
+        with open(chemin_fichier_sortie, "w", encoding="utf-8") as outfile:
+            json.dump(donnees, outfile, ensure_ascii=False, indent=4)
+        if log_callback: log_callback(f"{len(donnees)} exemples sauvegardés: '{os.path.basename(chemin_fichier_sortie)}'")
+        return True
+    except Exception as e:
+        if log_callback: log_callback(f"ERR sauvegarde '{chemin_fichier_sortie}': {e}")
+        else: messagebox.showerror("Erreur Sauvegarde JSON", f"Erreur: {e}")
+        return False
+
 def charger_donnees_entrainement_json(chemin_fichier_json):
     try:
-        with open(chemin_fichier_json, 'r', encoding='utf-8') as f:
-            donnees_brutes = json.load(f)
-        
-        if not isinstance(donnees_brutes, list):
-            raise ValueError("Le fichier JSON doit contenir une liste d'exemples.")
-
+        with open(chemin_fichier_json, 'r', encoding='utf-8') as f: donnees_brutes = json.load(f)
+        if not isinstance(donnees_brutes, list): raise ValueError("JSON doit contenir une liste.")
         donnees_formatees = []
         for item in donnees_brutes:
-            if not (isinstance(item, (list, tuple)) and len(item) == 2):
-                raise ValueError(f"Chaque exemple doit être une liste ou un tuple de deux éléments: [texte, annotations_dict]. Trouvé: {item}")
-            
+            if not (isinstance(item, (list, tuple)) and len(item) == 2): raise ValueError(f"Exemple invalide: {item}")
             texte, annotations_dict = item
-            
-            if not isinstance(texte, str):
-                raise ValueError(f"Le premier élément de l'exemple (texte) doit être une chaîne. Trouvé: {type(texte)}")
-            if not isinstance(annotations_dict, dict):
-                raise ValueError(f"Le deuxième élément de l'exemple (annotations) doit être un dictionnaire. Trouvé: {type(annotations_dict)}")
-
+            if not isinstance(texte, str): raise ValueError(f"Texte doit être str. Trouvé: {type(texte)}")
+            if not isinstance(annotations_dict, dict): raise ValueError(f"Annotations doit être dict. Trouvé: {type(annotations_dict)}")
             entites_tuples = []
             if "entities" in annotations_dict:
-                if not isinstance(annotations_dict["entities"], list):
-                    raise ValueError(f"La clé 'entities' doit contenir une liste. Trouvé: {type(annotations_dict['entities'])}")
-                
+                if not isinstance(annotations_dict["entities"], list): raise ValueError(f"'entities' doit être liste. Trouvé: {type(annotations_dict['entities'])}")
                 for ent_item in annotations_dict["entities"]:
-                    if not (isinstance(ent_item, (list, tuple)) and len(ent_item) == 3):
-                        raise ValueError(f"Chaque entité doit être une liste/tuple de 3 éléments [début, fin, label]. Trouvé: {ent_item}")
-                    
-                    if not (isinstance(ent_item[0], int) and isinstance(ent_item[1], int)):
-                         raise ValueError(f"Les indices de début/fin d'entité doivent être des entiers. Trouvé: {ent_item[:2]}")
-                    if not isinstance(ent_item[2], str):
-                        raise ValueError(f"Le label d'entité doit être une chaîne. Trouvé: {type(ent_item[2])}")
-                        
-                    entites_tuples.append(tuple(ent_item)) 
-            
+                    if not (isinstance(ent_item, (list, tuple)) and len(ent_item) == 3): raise ValueError(f"Entité invalide: {ent_item}")
+                    if not (isinstance(ent_item[0], int) and isinstance(ent_item[1], int)): raise ValueError(f"Indices entité non entiers: {ent_item[:2]}")
+                    if not isinstance(ent_item[2], str): raise ValueError(f"Label entité non str: {type(ent_item[2])}")
+                    entites_tuples.append(tuple(ent_item))
             donnees_formatees.append((texte, {"entities": entites_tuples}))
-
-        if not donnees_formatees and donnees_brutes:
-             messagebox.showwarning("Données Vides", f"Aucune donnée d'entraînement valide formatée depuis '{chemin_fichier_json}'. Vérifiez la structure.")
-             return None
-        elif not donnees_formatees: 
-             messagebox.showwarning("Données Vides", f"Le fichier '{chemin_fichier_json}' est vide ou ne contient pas de données.")
-             return None
+        if not donnees_formatees and donnees_brutes: messagebox.showwarning("Données Vides", f"Aucune donnée valide formatée depuis '{chemin_fichier_json}'."); return None
+        elif not donnees_formatees: messagebox.showwarning("Données Vides", f"'{chemin_fichier_json}' vide."); return None
         return donnees_formatees
-    except FileNotFoundError:
-        messagebox.showerror("Erreur Fichier JSON", f"Fichier de données d'entraînement '{chemin_fichier_json}' introuvable.")
-        return None
-    except json.JSONDecodeError:
-        messagebox.showerror("Erreur JSON", f"Le fichier '{chemin_fichier_json}' n'est pas un JSON valide.")
-        return None
-    except Exception as e:
-        messagebox.showerror("Erreur Chargement JSON", f"Erreur lors du chargement ou du formatage des données depuis '{chemin_fichier_json}': {e}")
-        return None
+    except FileNotFoundError: messagebox.showerror("Erreur Fichier JSON", f"Fichier '{chemin_fichier_json}' introuvable."); return None
+    except json.JSONDecodeError: messagebox.showerror("Erreur JSON", f"Fichier '{chemin_fichier_json}' n'est pas un JSON valide."); return None
+    except Exception as e: messagebox.showerror("Erreur Chargement JSON", f"Erreur chargement/formatage '{chemin_fichier_json}': {e}"); return None
 
 # Variables globales
-MODELES_SPACY_FR_BASE = { 
-    "Petit (sm)": "fr_core_news_sm",
-    "Moyen (md)": "fr_core_news_md",
-    "Grand (lg)": "fr_core_news_lg",
-}
+MODELES_SPACY_FR_BASE = {"Petit (sm)": "fr_core_news_sm", "Moyen (md)": "fr_core_news_md", "Grand (lg)": "fr_core_news_lg"}
 OPTION_MODELE_EXISTANT = "Modèle fine-tuné existant..." 
-
 modele_spacy_selectionne_pour_ft = None 
 chemin_donnees_entrainement_final = None 
 chemin_modele_a_tester = None 
 mapping_pseudonymes_actuel = None
+config_widgets_preparation = [] 
 
 # --- Fonctions GUI ---
 def on_model_type_changed(event=None):
     selection_label = choix_modele_var.get()
     if selection_label == OPTION_MODELE_EXISTANT:
-        frame_custom_model_path.pack(fill="x", pady=(5,0), before=bouton_valider_modele_et_continuer) # Modifié pour être avant le bouton principal
-        bouton_valider_modele_et_continuer.config(text="Valider Modèle Existant et Activer Test")
+        if not frame_custom_model_path.winfo_ismapped(): 
+            frame_custom_model_path.pack(fill="x", pady=(5,0), before=bouton_valider_modele) # Nom du bouton corrigé
+        bouton_valider_modele.config(text="Valider Modèle Existant et Tester")
     else:
         frame_custom_model_path.pack_forget()
-        bouton_valider_modele_et_continuer.config(text="Valider Modèle de Base et Continuer")
+        bouton_valider_modele.config(text="Valider Modèle de Base et Continuer")
 
 def valider_choix_modele():
     global modele_spacy_selectionne_pour_ft, chemin_modele_a_tester
+    print("DEBUG: valider_choix_modele - DÉBUT")
     
     choix_utilisateur_label = choix_modele_var.get()
     valeur_modele_base = MODELES_SPACY_FR_BASE.get(choix_utilisateur_label)
 
-    # Réinitialiser les états des cadres suivants à chaque validation de modèle
-    activer_cadre_selection_donnees(False)
-    activer_cadre_fine_tuning(False)
-    activer_cadre_test_modele(False)
+    # Cacher le notebook et oublier tous les onglets pour réinitialiser
+    if notebook.winfo_ismapped():
+        print("DEBUG: valider_choix_modele - Notebook visible, on le cache et on oublie les onglets.")
+        notebook.pack_forget()
+    for tab_id in reversed(notebook.tabs()): 
+        print(f"DEBUG: valider_choix_modele - Oubli de l'onglet : {tab_id}")
+        notebook.forget(tab_id)
+    
+    # S'assurer que tous les widgets internes des onglets sont initialement désactivés après nettoyage
+    activer_widgets_onglet_preparation(False)
+    activer_widgets_onglet_fine_tuning(False)
+    activer_widgets_onglet_test(False)
 
     if choix_utilisateur_label == OPTION_MODELE_EXISTANT:
+        print("DEBUG: valider_choix_modele - Option 'Modèle existant' choisie.")
         path_custom = var_custom_model_path.get()
         if not path_custom or not os.path.isdir(path_custom): 
             messagebox.showerror("Erreur", "Veuillez sélectionner un dossier de modèle fine-tuné valide.")
             return
         try:
+            print(f"DEBUG: valider_choix_modele - Validation du modèle existant : {path_custom}")
             spacy.load(path_custom) 
-            messagebox.showinfo("Modèle Valide", f"Modèle existant '{os.path.basename(path_custom)}' validé.\nVous pouvez passer directement au test.")
+            print("DEBUG: valider_choix_modele - Modèle existant chargé et validé.")
+            messagebox.showinfo("Modèle Valide", f"Modèle existant '{os.path.basename(path_custom)}' validé.\nL'onglet de Test est activé.")
+            
             chemin_modele_a_tester = path_custom
             modele_spacy_selectionne_pour_ft = None 
-            activer_cadre_test_modele(True)
-            bouton_valider_modele_et_continuer.config(state="disabled")
+            
+            notebook.add(tab_test_modele, text="Étape 2: Tester Modèle") 
+            if not notebook.winfo_ismapped():
+                 notebook.pack(padx=10, pady=10, fill="both", expand=True, anchor="n")
+            print("DEBUG: valider_choix_modele - Notebook (re)packé pour test.")
+            
+            notebook.select(tab_test_modele)
+            activer_widgets_onglet_test(True)
+            bouton_valider_modele.config(state="disabled")
+
         except Exception as e:
+            print(f"DEBUG: valider_choix_modele - Erreur chargement modèle existant : {e}")
             messagebox.showerror("Erreur Chargement Modèle", f"Impossible de charger le modèle depuis '{path_custom}'.\nErreur: {e}")
             chemin_modele_a_tester = None
-            return
+            return # Retour pour ne pas continuer si erreur
+            
     elif valeur_modele_base: 
+        print(f"DEBUG: valider_choix_modele - Option modèle de base '{valeur_modele_base}' choisie.")
         modele_spacy_selectionne_pour_ft = valeur_modele_base
         chemin_modele_a_tester = None 
         if verifier_et_telecharger_modele(modele_spacy_selectionne_pour_ft):
-            messagebox.showinfo("Modèle Prêt", f"Modèle de base sélectionné : {modele_spacy_selectionne_pour_ft}\nPassez à la sélection des données.")
-            activer_cadre_selection_donnees(True)
-            bouton_valider_modele_et_continuer.config(state="disabled")
-        # else: rien à faire de plus, verifier_et_telecharger_modele gère les messages
-    else:
-        messagebox.showwarning("Aucun Modèle", "Veuillez sélectionner une option valide dans la liste.")
+            print(f"DEBUG: valider_choix_modele - Modèle de base {modele_spacy_selectionne_pour_ft} prêt.")
+            messagebox.showinfo("Modèle Prêt", f"Modèle de base : {modele_spacy_selectionne_pour_ft}\nPassez à la préparation des données.")
+            
+            notebook.add(tab_preparation_donnees, text="Étape 2: Préparation Données")
+            notebook.add(tab_fine_tuning, text="Étape 3: Fine-tuning Modèle")
+            notebook.add(tab_test_modele, text="Étape 4: Test Modèle Fine-tuné")
+            if not notebook.winfo_ismapped():
+                 notebook.pack(padx=10, pady=10, fill="both", expand=True, anchor="n")
+            print("DEBUG: valider_choix_modele - Notebook (re)packé pour workflow complet.")
+            
+            notebook.tab(tab_preparation_donnees, state="normal")
+            notebook.tab(tab_fine_tuning, state="disabled")
+            notebook.tab(tab_test_modele, state="disabled")
+            
+            notebook.select(tab_preparation_donnees)
+            print("DEBUG: valider_choix_modele - Sélection de l'onglet Préparation Données.")
+            activer_widgets_onglet_preparation(True)
+            bouton_valider_modele.config(state="disabled")
+        # else: L'échec du téléchargement est géré dans verifier_et_telecharger_modele
+            
+    else: 
+        messagebox.showwarning("Sélection Invalide", "Veuillez sélectionner une option de modèle valide dans la liste.")
+        if notebook.winfo_ismapped(): notebook.pack_forget() 
+    print("DEBUG: valider_choix_modele - FIN")
 
 
 def verifier_et_telecharger_modele(nom_modele):
+    # ... (Fonction inchangée)
     try:
         spacy.load(nom_modele)
         return True
     except OSError:
-        if messagebox.askyesno("Modèle Non Trouvé", f"Le modèle '{nom_modele}' n'est pas trouvé. Voulez-vous le télécharger ?"):
+        if messagebox.askyesno("Modèle Non Trouvé", f"'{nom_modele}' non trouvé. Voulez-vous le télécharger ?"):
             status_label_dl = ttk.Label(cadre_choix_modele, text=f"Téléchargement de {nom_modele}...")
             status_label_dl.pack(pady=2)
             fenetre.update_idletasks()
             try:
                 subprocess.check_call(['python', '-m', 'spacy', 'download', nom_modele], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                messagebox.showinfo("Téléchargement Réussi", f"Modèle '{nom_modele}' téléchargé.")
+                messagebox.showinfo("Téléchargement Réussi", f"'{nom_modele}' téléchargé.")
                 return True
             except Exception as e: 
                 messagebox.showerror("Erreur Téléchargement", f"Impossible de télécharger '{nom_modele}'.\n{e}\nVérifiez la console ou essayez manuellement.")
                 return False
-            finally: # Assurer que le label de statut est enlevé
-                if 'status_label_dl' in locals() and status_label_dl.winfo_exists():
-                    status_label_dl.destroy()
+            finally:
+                if 'status_label_dl' in locals() and status_label_dl.winfo_exists(): status_label_dl.destroy()
         return False
 
-def choisir_fichier_json_donnees():
-    global chemin_donnees_entrainement_final # Modifié pour utiliser cette variable
-    chemin_fichier = filedialog.askopenfilename(title="Sélectionner le fichier JSON de données", filetypes=(("Fichiers JSON", "*.json"), ("Tous", "*.*")))
-    if chemin_fichier:
-        var_chemin_donnees_json.set(chemin_fichier)
-        chemin_donnees_entrainement_final = chemin_fichier # Mise à jour
-        label_statut_selection_donnees.config(text=f"Fichier : {os.path.basename(chemin_fichier)}")
+def log_message_preparation(message):
+    # ... (Fonction inchangée)
+    text_log_preparation.config(state="normal"); text_log_preparation.insert(tk.END, message + "\n"); text_log_preparation.see(tk.END); text_log_preparation.config(state="disabled"); fenetre.update_idletasks()
 
-def valider_fichier_donnees():
-    if not chemin_donnees_entrainement_final or not os.path.exists(chemin_donnees_entrainement_final):
-        messagebox.showerror("Erreur", "Sélectionnez un fichier JSON valide.")
-        label_statut_selection_donnees.config(text="Aucun fichier valide.")
-        return
-    try:
-        # Test de chargement pour valider le format général
-        test_data = charger_donnees_entrainement_json(chemin_donnees_entrainement_final)
-        if test_data is None: # Si charger_donnees_entrainement_json retourne None à cause d'une erreur interne déjà affichée
-            label_statut_selection_donnees.config(text="Erreur : Fichier JSON invalide ou vide.")
-            return
+def choisir_fichier_pour_config(type_entite_label, type_de_fichier, var_tk_path):
+    # ... (Fonction inchangée)
+    chemin = filedialog.askopenfilename(title=f"Sélectionner fichier {type_de_fichier} pour {type_entite_label}", filetypes=(("Fichiers Texte", "*.txt"), ("Tous", "*.*")))
+    if chemin: var_tk_path.set(chemin)
 
-        messagebox.showinfo("Données Prêtes", "Fichier de données validé.\nConfigurez le fine-tuning.")
-        label_statut_selection_donnees.config(text="Fichier de données prêt.")
-        bouton_valider_fichier_donnees.config(state="disabled")
-        activer_cadre_fine_tuning(True)
-    except Exception as e: 
-        messagebox.showerror("Erreur Fichier", f"Impossible de lire ou parser le fichier JSON : {e}")
-        label_statut_selection_donnees.config(text="Erreur : Fichier JSON invalide.")
-
-# ***** DÉFINITION DE LA FONCTION MANQUANTE AJOUTÉE ICI *****
-def choisir_dossier_sauvegarde_modele():
-    chemin_dossier = filedialog.askdirectory(title="Sélectionner le dossier pour sauvegarder le modèle fine-tuné")
-    if chemin_dossier:
-        var_chemin_sauvegarde_modele.set(chemin_dossier)
-# ***** FIN DE L'AJOUT *****
+def lancer_generation_donnees_gui():
+    # ... (Fonction inchangée)
+    global chemin_donnees_entrainement_final
+    log_message_preparation("Démarrage de la génération des données...")
+    text_log_preparation.config(state="normal"); text_log_preparation.delete(1.0, tk.END); text_log_preparation.config(state="disabled") 
+    donnees_combinees = []
+    configs_entites_gui = [
+        {"label": "PER", "placeholder_var": var_placeholder_per, "entites_var": var_entites_per, "phrases_var": var_phrases_per, "actif_var": var_actif_per},
+        {"label": "LOC", "placeholder_var": var_placeholder_loc, "entites_var": var_entites_loc, "phrases_var": var_phrases_loc, "actif_var": var_actif_loc},
+        {"label": "ORG", "placeholder_var": var_placeholder_org, "entites_var": var_entites_org, "phrases_var": var_phrases_org, "actif_var": var_actif_org},
+    ]
+    au_moins_un_type_genere = False
+    for config in configs_entites_gui:
+        if config["actif_var"].get():
+            label = config["label"]; placeholder = config["placeholder_var"].get(); chemin_entites = config["entites_var"].get(); chemin_phrases = config["phrases_var"].get()
+            if not all([placeholder, chemin_entites, chemin_phrases]): log_message_preparation(f"INFO: Infos manquantes pour {label}. Ignoré."); continue
+            log_message_preparation(f"\n--- Traitement : {label} ---")
+            entites = lire_entites_depuis_fichier(chemin_entites, log_message_preparation)
+            if entites is None or not entites: log_message_preparation(f"Pas d'entités pour {label}."); continue
+            phrases_modeles = lire_phrases_modeles_specifiques(chemin_phrases, placeholder, log_message_preparation)
+            if phrases_modeles is None or not phrases_modeles: log_message_preparation(f"Pas de phrases pour {label}."); continue
+            log_message_preparation(f"Génération pour {label}...")
+            donnees_generees = generer_donnees_pour_type(entites, phrases_modeles, label, placeholder, log_message_preparation)
+            if donnees_generees:
+                log_message_preparation(f"{len(donnees_generees)} exemples pour {label}.")
+                donnees_combinees.extend(donnees_generees); au_moins_un_type_genere = True
+            else: log_message_preparation(f"Aucune donnée générée pour {label}.")
+    if not donnees_combinees: messagebox.showwarning("Échec", "Aucune donnée d'entraînement générée."); log_message_preparation("Échec."); return
+    chemin_sauvegarde_combine = filedialog.asksaveasfilename(title="Sauvegarder données combinées", initialfile="donnees_entrainement_combinees.json", defaultextension=".json", filetypes=(("JSON", "*.json"),("Tous", "*.*")))
+    if chemin_sauvegarde_combine:
+        if sauvegarder_donnees_json(donnees_combinees, chemin_sauvegarde_combine, log_message_preparation):
+            chemin_donnees_entrainement_final = chemin_sauvegarde_combine
+            messagebox.showinfo("Succès", f"Données combinées: {chemin_donnees_entrainement_final}\nPassez à l'onglet 'Fine-tuning'.")
+            log_message_preparation(f"Terminé. Combiné: {chemin_donnees_entrainement_final}")
+            notebook.tab(tab_fine_tuning, state="normal"); notebook.select(tab_fine_tuning); activer_widgets_onglet_fine_tuning(True)
+            bouton_generer_donnees_gui.config(state="disabled") 
+        else: messagebox.showerror("Erreur", "Sauvegarde fichier combiné échouée."); log_message_preparation("Échec sauvegarde.")
+    else: log_message_preparation("Sauvegarde fichier combiné annulée.")
 
 def lancer_fine_tuning_gui():
-    global modele_spacy_selectionne_pour_ft, chemin_donnees_entrainement_final, chemin_modele_a_tester
+    # ... (Fonction inchangée)
+    global modele_spacy_selectionne_pour_ft, chemin_donnees_entrainement_final, chemin_modele_a_tester 
     if not modele_spacy_selectionne_pour_ft: messagebox.showerror("Erreur", "Modèle SpaCy de base non sélectionné pour le fine-tuning."); return
     if not chemin_donnees_entrainement_final or not os.path.exists(chemin_donnees_entrainement_final): messagebox.showerror("Erreur", "Fichier de données JSON introuvable."); return
     try:
@@ -237,22 +306,19 @@ def lancer_fine_tuning_gui():
         if not (0.0 <= dropout <= 1.0): messagebox.showerror("Config Erreur", "Dropout entre 0.0 et 1.0."); return
         if not chemin_sauvegarde: messagebox.showerror("Config Erreur", "Spécifiez un dossier de sauvegarde."); return
     except tk.TclError: messagebox.showerror("Config Erreur", "Valeurs numériques valides pour itérations/dropout."); return
-    
     TRAIN_DATA = charger_donnees_entrainement_json(chemin_donnees_entrainement_final)
-    if not TRAIN_DATA: log_fine_tuning("Échec chargement données. Vérifiez JSON et sa structure."); return
-
-    log_fine_tuning("Fine-tuning démarré...\n" + f"Modèle: {modele_spacy_selectionne_pour_ft}, Données: {os.path.basename(chemin_donnees_entrainement_final)} ({len(TRAIN_DATA)} ex.), It: {iterations}, Drop: {dropout}, Sauvegarde: {chemin_sauvegarde}\n")
+    if not TRAIN_DATA: log_message_fine_tuning("Échec chargement données. Vérifiez JSON et sa structure."); return
+    log_message_fine_tuning("Fine-tuning démarré...\n" + f"Modèle: {modele_spacy_selectionne_pour_ft}, Données: {os.path.basename(chemin_donnees_entrainement_final)} ({len(TRAIN_DATA)} ex.), It: {iterations}, Drop: {dropout}, Sauvegarde: {chemin_sauvegarde}\n")
     bouton_lancer_fine_tuning.config(state="disabled"); fenetre.update_idletasks()
     try:
-        nlp = spacy.load(modele_spacy_selectionne_pour_ft)
-        log_fine_tuning(f"Modèle '{modele_spacy_selectionne_pour_ft}' chargé.")
+        nlp = spacy.load(modele_spacy_selectionne_pour_ft) 
+        log_message_fine_tuning(f"Modèle '{modele_spacy_selectionne_pour_ft}' chargé.")
         ner = nlp.get_pipe("ner") if "ner" in nlp.pipe_names else nlp.add_pipe("ner", last=True)
         labels_dans_donnees = set()
         for _, annotations in TRAIN_DATA:
             for ent in annotations.get("entities", []): labels_dans_donnees.add(ent[2])
         for label in labels_dans_donnees: ner.add_label(label)
-        log_fine_tuning(f"Labels pour NER : {labels_dans_donnees}")
-        
+        log_message_fine_tuning(f"Labels pour NER : {labels_dans_donnees}")
         with nlp.select_pipes(disable=[p for p in nlp.pipe_names if p != "ner"]):
             optimizer = nlp.begin_training()
             for i in range(iterations):
@@ -262,57 +328,81 @@ def lancer_fine_tuning_gui():
                         doc = nlp.make_doc(texte)
                         example = Example.from_dict(doc, annots)
                         nlp.update([example], sgd=optimizer, drop=dropout, losses=pertes)
-                    except Exception as e_upd: log_fine_tuning(f"Err nlp.update (it {i+1}, ex. ignoré): {e_upd}"); continue
-                log_fine_tuning(f"It {i+1}/{iterations} - Perte NER: {pertes.get('ner',0.0):.4f}")
+                    except Exception as e_upd: log_message_fine_tuning(f"Err nlp.update (it {i+1}, ex. ignoré): {e_upd}"); continue
+                log_message_fine_tuning(f"It {i+1}/{iterations} - Perte NER: {pertes.get('ner',0.0):.4f}")
                 fenetre.update_idletasks()
-        
         if not os.path.exists(chemin_sauvegarde): os.makedirs(chemin_sauvegarde)
         nlp.to_disk(chemin_sauvegarde)
-        log_fine_tuning(f"\nModèle fine-tuné sauvegardé dans : '{chemin_sauvegarde}'")
+        log_message_fine_tuning(f"\nModèle fine-tuné sauvegardé dans : '{chemin_sauvegarde}'")
         messagebox.showinfo("Fine-tuning Terminé", f"Modèle sauvegardé dans\n{chemin_sauvegarde}")
         chemin_modele_a_tester = chemin_sauvegarde 
-        activer_cadre_test_modele(True) 
+        
+        # S'assurer que l'onglet de test est présent avant de le configurer
+        tab_test_present = False
+        for i in range(len(notebook.tabs())):
+            if notebook.nametowidget(notebook.tabs()[i]) == tab_test_modele:
+                tab_test_present = True
+                break
+        if not tab_test_present: # S'il avait été 'forgotten' et non ré-ajouté
+            notebook.add(tab_test_modele, text="Étape 4: Test Modèle Fine-tuné") # ou le nom approprié
+
+        notebook.tab(tab_test_modele, state="normal") 
+        notebook.select(tab_test_modele) 
+        activer_widgets_onglet_test(True) 
     except Exception as e:
-        log_fine_tuning(f"\nErreur majeure fine-tuning : {e}"); messagebox.showerror("Erreur Fine-tuning", f"Erreur : {e}")
+        log_message_fine_tuning(f"\nErreur majeure fine-tuning : {e}"); messagebox.showerror("Erreur Fine-tuning", f"Erreur : {e}")
     finally:
         bouton_lancer_fine_tuning.config(state="normal")
 
-def log_fine_tuning(message): 
+def log_message_fine_tuning(message): 
+    # ... (Fonction inchangée)
     text_log_fine_tuning.config(state="normal"); text_log_fine_tuning.insert(tk.END, message + "\n"); text_log_fine_tuning.see(tk.END); text_log_fine_tuning.config(state="disabled"); fenetre.update_idletasks()
 
-def activer_cadre_selection_donnees(activer): 
+def activer_widgets_onglet_preparation(activer):
+    # ... (Fonction inchangée)
     etat = "normal" if activer else "disabled"
-    bouton_choisir_fichier_json.config(state=etat)
-    entry_chemin_donnees_json.config(state="readonly" if activer else "disabled")
-    bouton_valider_fichier_donnees.config(state=etat)
-    if not activer: 
-        var_chemin_donnees_json.set("")
-        label_statut_selection_donnees.config(text="")
+    for type_config_widgets in config_widgets_preparation:
+        type_config_widgets["checkbutton"].config(state=etat)
+        type_config_widgets["entites_entry"].config(state="readonly" if activer else "disabled")
+        type_config_widgets["entites_btn"].config(state=etat)
+        type_config_widgets["phrases_entry"].config(state="readonly" if activer else "disabled")
+        type_config_widgets["phrases_btn"].config(state=etat)
+        type_config_widgets["placeholder_entry"].config(state=etat) 
+    bouton_generer_donnees_gui.config(state=etat)
+    text_log_preparation.config(state="normal")
+    if activer: text_log_preparation.delete(1.0, tk.END)
+    text_log_preparation.config(state="disabled") 
+    if not activer:
+        var_entites_per.set(""); var_phrases_per.set(""); var_placeholder_per.set("{NOM}")
+        var_entites_loc.set(""); var_phrases_loc.set(""); var_placeholder_loc.set("{LOC}")
+        var_entites_org.set(""); var_phrases_org.set(""); var_placeholder_org.set("{ORG}")
     fenetre.update_idletasks()
 
-def activer_cadre_fine_tuning(activer): 
-    etat = "normal" if activer else "disabled"
-    entry_iterations.config(state=etat)
-    entry_dropout.config(state=etat)
-    entry_chemin_sauvegarde_modele.config(state="readonly" if activer else "disabled")
-    bouton_choisir_dossier_modele.config(state=etat)
-    bouton_lancer_fine_tuning.config(state=etat)
-    text_log_fine_tuning.config(state="normal" if activer else "disabled") # Pour pouvoir écrire dedans
+def activer_widgets_onglet_fine_tuning(activer): 
+    # ... (Fonction inchangée)
+    etat = "normal" if activer else "disabled"; entry_iterations.config(state=etat); entry_dropout.config(state=etat); entry_chemin_sauvegarde_modele.config(state="readonly" if activer else "disabled"); bouton_choisir_dossier_modele.config(state=etat); bouton_lancer_fine_tuning.config(state=etat)
+    text_log_fine_tuning.config(state="normal")
     if not activer:
         var_iterations.set(10); var_dropout.set(0.3); var_chemin_sauvegarde_modele.set("")
-        text_log_fine_tuning.config(state="normal"); text_log_fine_tuning.delete(1.0, tk.END); text_log_fine_tuning.config(state="disabled")
+        text_log_fine_tuning.delete(1.0, tk.END)
+    text_log_fine_tuning.config(state="disabled")
     fenetre.update_idletasks()
 
+def choisir_dossier_sauvegarde_modele(): # Définition de la fonction
+    chemin_dossier = filedialog.askdirectory(title="Sélectionner le dossier pour sauvegarder le modèle fine-tuné")
+    if chemin_dossier:
+        var_chemin_sauvegarde_modele.set(chemin_dossier)
+
 def choisir_fichier_test_txt():
-    chemin_fichier = filedialog.askopenfilename(title="Sélectionner le fichier texte pour le test", filetypes=(("Fichiers Texte", "*.txt"), ("Tous les fichiers", "*.*")))
-    if chemin_fichier:
-        var_chemin_fichier_test.set(chemin_fichier)
-        label_statut_test.config(text=f"Fichier de test : {os.path.basename(chemin_fichier)}")
+    # ... (Fonction inchangée)
+    chemin_fichier = filedialog.askopenfilename(title="Sélectionner fichier texte pour test", filetypes=(("Fichiers Texte", "*.txt"), ("Tous", "*.*")))
+    if chemin_fichier: var_chemin_fichier_test.set(chemin_fichier); label_statut_test.config(text=f"Fichier: {os.path.basename(chemin_fichier)}")
 
 def lancer_test_pseudonymisation_gui():
+    # ... (Fonction inchangée)
     global chemin_modele_a_tester, mapping_pseudonymes_actuel 
     path_fichier_test = var_chemin_fichier_test.get()
-    if not chemin_modele_a_tester: messagebox.showerror("Erreur", "Aucun modèle (fine-tuné ou existant) n'est prêt pour le test."); return
+    if not chemin_modele_a_tester: messagebox.showerror("Erreur", "Aucun modèle (fine-tuné ou existant) n'est prêt."); return
     if not path_fichier_test or not os.path.exists(path_fichier_test): messagebox.showerror("Erreur", "Sélectionnez un fichier texte de test valide."); return
     label_statut_test.config(text="Chargement du modèle..."); fenetre.update_idletasks()
     try:
@@ -330,6 +420,7 @@ def lancer_test_pseudonymisation_gui():
     except Exception as e: messagebox.showerror("Erreur Test", f"Erreur test : {e}"); label_statut_test.config(text=f"Erreur : {e}")
 
 def sauvegarder_texte_resultat():
+    # ... (Fonction inchangée)
     texte_a_sauvegarder = text_resultat_pseudo.get(1.0, tk.END).strip()
     if not texte_a_sauvegarder: messagebox.showwarning("Rien à sauvegarder", "Aucun texte pseudonymisé."); return
     chemin_input = var_chemin_fichier_test.get()
@@ -342,6 +433,7 @@ def sauvegarder_texte_resultat():
         except Exception as e: messagebox.showerror("Erreur Sauvegarde", f"Impossible de sauvegarder : {e}")
 
 def sauvegarder_mapping_resultat():
+    # ... (Fonction inchangée)
     global mapping_pseudonymes_actuel
     if not mapping_pseudonymes_actuel: messagebox.showwarning("Rien à sauvegarder", "Aucune table de correspondance."); return
     chemin_input = var_chemin_fichier_test.get()
@@ -353,26 +445,43 @@ def sauvegarder_mapping_resultat():
             messagebox.showinfo("Succès", f"Mapping sauvegardé : {chemin_fichier}")
         except Exception as e: messagebox.showerror("Erreur Sauvegarde", f"Impossible de sauvegarder JSON : {e}")
 
-def activer_cadre_test_modele(activer):
+def activer_widgets_onglet_test(activer):
+    # ... (Fonction inchangée)
     etat = "normal" if activer else "disabled"
-    bouton_choisir_fichier_test.config(state=etat)
-    entry_chemin_fichier_test.config(state="readonly" if activer else "disabled")
-    bouton_lancer_test.config(state=etat)
+    bouton_choisir_fichier_test.config(state=etat); entry_chemin_fichier_test.config(state="readonly" if activer else "disabled"); bouton_lancer_test.config(state=etat)
     if not activer:
         var_chemin_fichier_test.set(""); label_statut_test.config(text="")
         text_resultat_pseudo.config(state="normal"); text_resultat_pseudo.delete(1.0, tk.END); text_resultat_pseudo.config(state="disabled")
         bouton_sauvegarder_texte_pseudo.config(state="disabled"); bouton_sauvegarder_mapping_pseudo.config(state="disabled")
     fenetre.update_idletasks()
 
-# --- Création de la fenêtre principale ---
+# --- Interface Graphique ---
+# ... (Définition de fenetre, main_canvas, v_scrollbar, content_frame, on_content_frame_configure, _on_mousewheel)
 fenetre = tk.Tk()
-fenetre.title("Assistant de Fine-tuning et Test LLM SpaCy")
+fenetre.title("Assistant Fine-tuning & Test SpaCy")
 fenetre.geometry("800x700") 
 
-# --- Cadre 1: Choix du Modèle ---
-cadre_choix_modele = ttk.LabelFrame(fenetre, text="1. Choix du Modèle", padding=(10, 10))
-cadre_choix_modele.pack(padx=10, pady=10, fill="x")
-ttk.Label(cadre_choix_modele, text="Modèle SpaCy français ou chemin vers modèle existant :").pack(pady=(0,5), anchor="w")
+main_canvas = tk.Canvas(fenetre)
+v_scrollbar = ttk.Scrollbar(fenetre, orient="vertical", command=main_canvas.yview)
+main_canvas.configure(yscrollcommand=v_scrollbar.set)
+v_scrollbar.pack(side=tk.RIGHT, fill="y")
+main_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+content_frame = ttk.Frame(main_canvas) 
+main_canvas.create_window((0, 0), window=content_frame, anchor="nw", tags="content_frame")
+def on_content_frame_configure(event): main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+content_frame.bind("<Configure>", on_content_frame_configure)
+def _on_mousewheel(event):
+    scroll_speed_multiplier = 2 
+    if event.num == 4: main_canvas.yview_scroll(-1 * scroll_speed_multiplier, "units")
+    elif event.num == 5: main_canvas.yview_scroll(1 * scroll_speed_multiplier, "units")
+    else: main_canvas.yview_scroll(int(-1*(event.delta/120) * scroll_speed_multiplier), "units")
+for widget_to_bind in [main_canvas, content_frame, fenetre]:
+    widget_to_bind.bind("<MouseWheel>", _on_mousewheel); widget_to_bind.bind("<Button-4>", _on_mousewheel); widget_to_bind.bind("<Button-5>", _on_mousewheel)  
+
+# --- Cadre 1: Choix du Modèle (Parent: content_frame) ---
+cadre_choix_modele = ttk.LabelFrame(content_frame, text="1. Choix du Modèle", padding=(10, 10))
+cadre_choix_modele.pack(padx=10, pady=10, fill="x", anchor="n")
+ttk.Label(cadre_choix_modele, text="Modèle SpaCy français ou chemin vers modèle existant :").pack(pady=(0,5), anchor="w") 
 choix_modele_var = tk.StringVar(fenetre)
 options_modeles_labels = list(MODELES_SPACY_FR_BASE.keys()) + [OPTION_MODELE_EXISTANT]
 menu_deroulant_modeles = ttk.Combobox(cadre_choix_modele, textvariable=choix_modele_var, values=options_modeles_labels, state="readonly", width=40)
@@ -380,7 +489,7 @@ if options_modeles_labels: menu_deroulant_modeles.current(1)
 menu_deroulant_modeles.pack(pady=5, fill="x")
 menu_deroulant_modeles.bind("<<ComboboxSelected>>", on_model_type_changed)
 
-frame_custom_model_path = ttk.Frame(cadre_choix_modele) # Sera packé dynamiquement
+frame_custom_model_path = ttk.Frame(cadre_choix_modele) 
 var_custom_model_path = tk.StringVar()
 ttk.Label(frame_custom_model_path, text="Chemin modèle existant:", width=22).pack(side=tk.LEFT)
 entry_custom_model_path = ttk.Entry(frame_custom_model_path, textvariable=var_custom_model_path, width=30, state="readonly")
@@ -388,63 +497,81 @@ entry_custom_model_path.pack(side=tk.LEFT, expand=True, fill="x", padx=2)
 bouton_browse_custom_model = ttk.Button(frame_custom_model_path, text="...", width=3, command=lambda: var_custom_model_path.set(filedialog.askdirectory(title="Sélectionner dossier du modèle fine-tuné")))
 bouton_browse_custom_model.pack(side=tk.LEFT)
 
-bouton_valider_modele_et_continuer = ttk.Button(cadre_choix_modele, text="Valider Modèle de Base et Continuer", command=valider_choix_modele) # Nom de variable du bouton modifié
-bouton_valider_modele_et_continuer.pack(pady=(10,0))
-on_model_type_changed() # Appel initial
+bouton_valider_modele = ttk.Button(cadre_choix_modele, text="Valider Modèle de Base et Continuer", command=valider_choix_modele) 
+bouton_valider_modele.pack(pady=(10,0)) 
+on_model_type_changed() 
 
-# --- Cadre 2: Sélection des Données d'Entraînement Combinées ---
-cadre_selection_donnees = ttk.LabelFrame(fenetre, text="2. Sélection des Données d'Entraînement (JSON)", padding=(10, 10))
-cadre_selection_donnees.pack(padx=10, pady=10, fill="x")
-var_chemin_donnees_json = tk.StringVar()
-frame_json_selection = ttk.Frame(cadre_selection_donnees)
-frame_json_selection.pack(fill="x", pady=2)
-ttk.Label(frame_json_selection, text="Fichier Données JSON:", width=25).pack(side=tk.LEFT, padx=(0,5))
-entry_chemin_donnees_json = ttk.Entry(frame_json_selection, textvariable=var_chemin_donnees_json, state="readonly", width=40)
-entry_chemin_donnees_json.pack(side=tk.LEFT, expand=True, fill="x", padx=(0,5))
-bouton_choisir_fichier_json = ttk.Button(frame_json_selection, text="Parcourir...", command=choisir_fichier_json_donnees)
-bouton_choisir_fichier_json.pack(side=tk.LEFT)
-bouton_valider_fichier_donnees = ttk.Button(cadre_selection_donnees, text="Valider Fichier de Données", command=valider_fichier_donnees)
-bouton_valider_fichier_donnees.pack(pady=10)
-label_statut_selection_donnees = ttk.Label(cadre_selection_donnees, text="")
-label_statut_selection_donnees.pack(pady=2)
+# --- Notebook pour les étapes suivantes (initialement non packé) ---
+notebook = ttk.Notebook(content_frame) 
+# Le notebook est packé conditionnellement dans valider_choix_modele
 
-# --- Cadre 3: Fine-tuning du Modèle ---
-cadre_fine_tuning = ttk.LabelFrame(fenetre, text="3. Fine-tuning du Modèle", padding=(10, 10))
-cadre_fine_tuning.pack(padx=10, pady=10, fill="x")
+# Définir les frames des onglets une seule fois globalement
+tab_preparation_donnees = ttk.Frame(notebook, padding=(10,10))
+tab_fine_tuning = ttk.Frame(notebook, padding=(10,10))
+tab_test_modele = ttk.Frame(notebook, padding=(10,10))
+
+# --- Contenu de l'Onglet 1: Préparation Données ---
+var_actif_per = tk.BooleanVar(value=True); var_entites_per = tk.StringVar(); var_phrases_per = tk.StringVar(); var_placeholder_per = tk.StringVar(value="{NOM}")
+var_actif_loc = tk.BooleanVar(value=True); var_entites_loc = tk.StringVar(); var_phrases_loc = tk.StringVar(); var_placeholder_loc = tk.StringVar(value="{LOC}")
+var_actif_org = tk.BooleanVar(value=True); var_entites_org = tk.StringVar(); var_phrases_org = tk.StringVar(); var_placeholder_org = tk.StringVar(value="{ORG}")
+def creer_section_type_entite(parent, label_type, var_actif_chk, var_ent_path, var_phr_path, var_plh):
+    frame_type = ttk.LabelFrame(parent, text=f" {label_type} ", padding=5); frame_type.pack(fill="x", expand=True, pady=3, padx=3)
+    chk_button = ttk.Checkbutton(frame_type, text="Activer ce type", variable=var_actif_chk); chk_button.pack(anchor="w")
+    f_ent = ttk.Frame(frame_type); f_ent.pack(fill="x", pady=1)
+    ttk.Label(f_ent, text="Fichier Entités:", width=15).pack(side=tk.LEFT)
+    entry_ent = ttk.Entry(f_ent, textvariable=var_ent_path, width=35, state="readonly"); entry_ent.pack(side=tk.LEFT, expand=True, fill="x", padx=1)
+    btn_ent = ttk.Button(f_ent, text="...", width=3, command=lambda v=var_ent_path, lt=label_type: choisir_fichier_pour_config(lt, "Entités", v)); btn_ent.pack(side=tk.LEFT)
+    f_phr = ttk.Frame(frame_type); f_phr.pack(fill="x", pady=1)
+    ttk.Label(f_phr, text="Fichier Phrases:", width=15).pack(side=tk.LEFT)
+    entry_phr = ttk.Entry(f_phr, textvariable=var_phr_path, width=35, state="readonly"); entry_phr.pack(side=tk.LEFT, expand=True, fill="x", padx=1)
+    btn_phr = ttk.Button(f_phr, text="...", width=3, command=lambda v=var_phr_path, lt=label_type: choisir_fichier_pour_config(lt, "Phrases", v)); btn_phr.pack(side=tk.LEFT)
+    f_plh = ttk.Frame(frame_type); f_plh.pack(fill="x", pady=1)
+    ttk.Label(f_plh, text="Placeholder:", width=15).pack(side=tk.LEFT)
+    entry_plh = ttk.Entry(f_plh, textvariable=var_plh, width=10); entry_plh.pack(side=tk.LEFT)
+    config_widgets_preparation.append({ # Stocker les références pour activer/désactiver
+        "checkbutton": chk_button, "entites_entry": entry_ent, "entites_btn": btn_ent,
+        "phrases_entry": entry_phr, "phrases_btn": btn_phr, "placeholder_entry": entry_plh
+    })
+creer_section_type_entite(tab_preparation_donnees, "PER", var_actif_per, var_entites_per, var_phrases_per, var_placeholder_per)
+creer_section_type_entite(tab_preparation_donnees, "LOC", var_actif_loc, var_entites_loc, var_phrases_loc, var_placeholder_loc)
+creer_section_type_entite(tab_preparation_donnees, "ORG", var_actif_org, var_entites_org, var_phrases_org, var_placeholder_org)
+bouton_generer_donnees_gui = ttk.Button(tab_preparation_donnees, text="Générer et Combiner les Données", command=lancer_generation_donnees_gui); bouton_generer_donnees_gui.pack(pady=10)
+text_log_preparation = scrolledtext.ScrolledText(tab_preparation_donnees, height=5, width=80, state="disabled", wrap=tk.WORD); text_log_preparation.pack(pady=5, fill="x", expand=False)
+
+# --- Contenu de l'Onglet 2: Fine-tuning Modèle ---
 var_iterations = tk.IntVar(value=10); var_dropout = tk.DoubleVar(value=0.3); var_chemin_sauvegarde_modele = tk.StringVar()
-frame_iter = ttk.Frame(cadre_fine_tuning); frame_iter.pack(fill="x", pady=2)
-ttk.Label(frame_iter, text="Nombre d'itérations:", width=25).pack(side=tk.LEFT, padx=(0,5))
+frame_iter = ttk.Frame(tab_fine_tuning); frame_iter.pack(fill="x", pady=2)
+ttk.Label(frame_iter, text="Nombre d'itérations:", width=22).pack(side=tk.LEFT, padx=(0,5))
 entry_iterations = ttk.Spinbox(frame_iter, from_=1, to=1000, textvariable=var_iterations, width=10); entry_iterations.pack(side=tk.LEFT)
-frame_drop = ttk.Frame(cadre_fine_tuning); frame_drop.pack(fill="x", pady=2)
-ttk.Label(frame_drop, text="Taux de Dropout (0.0-1.0):", width=25).pack(side=tk.LEFT, padx=(0,5))
+frame_drop = ttk.Frame(tab_fine_tuning); frame_drop.pack(fill="x", pady=2)
+ttk.Label(frame_drop, text="Taux de Dropout:", width=22).pack(side=tk.LEFT, padx=(0,5)) 
 entry_dropout = ttk.Spinbox(frame_drop, from_=0.0, to=1.0, increment=0.05, textvariable=var_dropout, width=10, format="%.2f"); entry_dropout.pack(side=tk.LEFT)
-frame_sauvegarde_modele = ttk.Frame(cadre_fine_tuning); frame_sauvegarde_modele.pack(fill="x", pady=2)
-ttk.Label(frame_sauvegarde_modele, text="Dossier de sauvegarde du modèle:", width=25).pack(side=tk.LEFT, padx=(0,5))
+frame_sauvegarde_modele = ttk.Frame(tab_fine_tuning); frame_sauvegarde_modele.pack(fill="x", pady=2)
+ttk.Label(frame_sauvegarde_modele, text="Dossier sauvegarde modèle:", width=22).pack(side=tk.LEFT, padx=(0,5)) 
 entry_chemin_sauvegarde_modele = ttk.Entry(frame_sauvegarde_modele, textvariable=var_chemin_sauvegarde_modele, state="readonly", width=40); entry_chemin_sauvegarde_modele.pack(side=tk.LEFT, expand=True, fill="x", padx=(0,5))
-bouton_choisir_dossier_modele = ttk.Button(frame_sauvegarde_modele, text="Parcourir...", command=choisir_dossier_sauvegarde_modele); bouton_choisir_dossier_modele.pack(side=tk.LEFT) # Ligne 531 dans le fichier de l'utilisateur
-bouton_lancer_fine_tuning = ttk.Button(cadre_fine_tuning, text="Lancer le Fine-tuning", command=lancer_fine_tuning_gui); bouton_lancer_fine_tuning.pack(pady=10)
-ttk.Label(cadre_fine_tuning, text="Log du Fine-tuning:").pack(anchor="w", pady=(5,0))
-text_log_fine_tuning = scrolledtext.ScrolledText(cadre_fine_tuning, height=8, width=80, state="disabled", wrap=tk.WORD); text_log_fine_tuning.pack(pady=5, fill="x", expand=False)
+bouton_choisir_dossier_modele = ttk.Button(frame_sauvegarde_modele, text="...", width=3, command=choisir_dossier_sauvegarde_modele); bouton_choisir_dossier_modele.pack(side=tk.LEFT)
+bouton_lancer_fine_tuning = ttk.Button(tab_fine_tuning, text="Lancer le Fine-tuning", command=lancer_fine_tuning_gui); bouton_lancer_fine_tuning.pack(pady=10)
+ttk.Label(tab_fine_tuning, text="Log du Fine-tuning:").pack(anchor="w", pady=(5,0))
+text_log_fine_tuning = scrolledtext.ScrolledText(tab_fine_tuning, height=7, width=80, state="disabled", wrap=tk.WORD); text_log_fine_tuning.pack(pady=5, fill="x", expand=False)
 
-# --- Cadre 4: Tester le Modèle Fine-tuné ---
-cadre_test_modele = ttk.LabelFrame(fenetre, text="4. Tester le Modèle Fine-tuné", padding=(10, 10))
-cadre_test_modele.pack(padx=10, pady=10, fill="both", expand=True)
+# --- Contenu de l'Onglet 3: Test Modèle ---
 var_chemin_fichier_test = tk.StringVar()
-frame_fichier_test = ttk.Frame(cadre_test_modele); frame_fichier_test.pack(fill="x", pady=5)
-ttk.Label(frame_fichier_test, text="Fichier Texte de Test (.txt):", width=25).pack(side=tk.LEFT, padx=(0,5))
+frame_fichier_test = ttk.Frame(tab_test_modele); frame_fichier_test.pack(fill="x", pady=5)
+ttk.Label(frame_fichier_test, text="Fichier Texte de Test:", width=22).pack(side=tk.LEFT, padx=(0,5)) 
 entry_chemin_fichier_test = ttk.Entry(frame_fichier_test, textvariable=var_chemin_fichier_test, state="readonly", width=40); entry_chemin_fichier_test.pack(side=tk.LEFT, expand=True, fill="x", padx=(0,5))
-bouton_choisir_fichier_test = ttk.Button(frame_fichier_test, text="Parcourir...", command=choisir_fichier_test_txt); bouton_choisir_fichier_test.pack(side=tk.LEFT)
-bouton_lancer_test = ttk.Button(cadre_test_modele, text="Lancer le Test de Pseudonymisation", command=lancer_test_pseudonymisation_gui); bouton_lancer_test.pack(pady=10)
-label_statut_test = ttk.Label(cadre_test_modele, text=""); label_statut_test.pack(pady=2)
-ttk.Label(cadre_test_modele, text="Résultat de la Pseudonymisation:").pack(anchor="w", pady=(5,0))
-text_resultat_pseudo = scrolledtext.ScrolledText(cadre_test_modele, height=10, width=80, state="disabled", wrap=tk.WORD); text_resultat_pseudo.pack(pady=5, fill="both", expand=True)
-frame_sauvegarde_test = ttk.Frame(cadre_test_modele); frame_sauvegarde_test.pack(pady=5)
-bouton_sauvegarder_texte_pseudo = ttk.Button(frame_sauvegarde_test, text="Sauvegarder Texte Pseudonymisé", command=sauvegarder_texte_resultat, state="disabled"); bouton_sauvegarder_texte_pseudo.pack(side=tk.LEFT, padx=5)
+bouton_choisir_fichier_test = ttk.Button(frame_fichier_test, text="...", width=3, command=choisir_fichier_test_txt); bouton_choisir_fichier_test.pack(side=tk.LEFT)
+bouton_lancer_test = ttk.Button(tab_test_modele, text="Lancer Test Pseudonymisation", command=lancer_test_pseudonymisation_gui); bouton_lancer_test.pack(pady=10)
+label_statut_test = ttk.Label(tab_test_modele, text=""); label_statut_test.pack(pady=2)
+ttk.Label(tab_test_modele, text="Résultat Pseudonymisation:").pack(anchor="w", pady=(5,0))
+text_resultat_pseudo = scrolledtext.ScrolledText(tab_test_modele, height=8, width=80, state="disabled", wrap=tk.WORD); text_resultat_pseudo.pack(pady=5, fill="both", expand=True)
+frame_sauvegarde_test = ttk.Frame(tab_test_modele); frame_sauvegarde_test.pack(pady=5)
+bouton_sauvegarder_texte_pseudo = ttk.Button(frame_sauvegarde_test, text="Sauvegarder Texte", command=sauvegarder_texte_resultat, state="disabled"); bouton_sauvegarder_texte_pseudo.pack(side=tk.LEFT, padx=5) 
 bouton_sauvegarder_mapping_pseudo = ttk.Button(frame_sauvegarde_test, text="Sauvegarder Mapping", command=sauvegarder_mapping_resultat, state="disabled"); bouton_sauvegarder_mapping_pseudo.pack(side=tk.LEFT, padx=5)
 
-# Initialisation des états des cadres
-activer_cadre_selection_donnees(False)
-activer_cadre_fine_tuning(False)
-activer_cadre_test_modele(False)
+# Initialisation (le notebook n'est pas packé, les widgets internes des onglets sont désactivés par défaut par leurs fonctions d'activation)
+activer_widgets_onglet_preparation(False) 
+activer_widgets_onglet_fine_tuning(False)
+activer_widgets_onglet_test(False)
+# Les onglets ne sont pas ajoutés au notebook ici, mais dans valider_choix_modele
 
 fenetre.mainloop()
