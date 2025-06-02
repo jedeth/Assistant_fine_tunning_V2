@@ -9,6 +9,9 @@ import json
 import random
 import logique_preparation_donnees as lpd
 import logique_fine_tuning as lft 
+import logique_pseudonymisation as lp
+import utils # Si utils.py
+
 
 # --- Logique de Pseudonymisation ---
 def pseudonymiser_texte_pour_gui(nlp_model, texte_original):
@@ -112,84 +115,100 @@ def on_model_type_changed(event=None):
 
 def valider_choix_modele():
     global modele_spacy_selectionne_pour_ft, chemin_modele_a_tester
-    print("DEBUG: valider_choix_modele - DÉBUT")
     
     choix_utilisateur_label = choix_modele_var.get()
     valeur_modele_base = MODELES_SPACY_FR_BASE.get(choix_utilisateur_label)
 
-    # Cacher le notebook et oublier tous les onglets pour réinitialiser
+    # Cacher et nettoyer le notebook avant de reconfigurer
     if notebook.winfo_ismapped():
-        print("DEBUG: valider_choix_modele - Notebook visible, on le cache et on oublie les onglets.")
         notebook.pack_forget()
     for tab_id in reversed(notebook.tabs()): 
-        print(f"DEBUG: valider_choix_modele - Oubli de l'onglet : {tab_id}")
         notebook.forget(tab_id)
     
-    # S'assurer que tous les widgets internes des onglets sont initialement désactivés après nettoyage
     activer_widgets_onglet_preparation(False)
     activer_widgets_onglet_fine_tuning(False)
     activer_widgets_onglet_test(False)
 
     if choix_utilisateur_label == OPTION_MODELE_EXISTANT:
-        print("DEBUG: valider_choix_modele - Option 'Modèle existant' choisie.")
         path_custom = var_custom_model_path.get()
         if not path_custom or not os.path.isdir(path_custom): 
             messagebox.showerror("Erreur", "Veuillez sélectionner un dossier de modèle fine-tuné valide.")
             return
         try:
-            print(f"DEBUG: valider_choix_modele - Validation du modèle existant : {path_custom}")
+            # Essayer de charger pour valider (ne pas garder en mémoire)
             spacy.load(path_custom) 
-            print("DEBUG: valider_choix_modele - Modèle existant chargé et validé.")
             messagebox.showinfo("Modèle Valide", f"Modèle existant '{os.path.basename(path_custom)}' validé.\nL'onglet de Test est activé.")
-            
             chemin_modele_a_tester = path_custom
             modele_spacy_selectionne_pour_ft = None 
             
             notebook.add(tab_test_modele, text="Étape 2: Tester Modèle") 
             if not notebook.winfo_ismapped():
                  notebook.pack(padx=10, pady=10, fill="both", expand=True, anchor="n")
-            print("DEBUG: valider_choix_modele - Notebook (re)packé pour test.")
             
             notebook.select(tab_test_modele)
             activer_widgets_onglet_test(True)
             bouton_valider_modele.config(state="disabled")
 
         except Exception as e:
-            print(f"DEBUG: valider_choix_modele - Erreur chargement modèle existant : {e}")
             messagebox.showerror("Erreur Chargement Modèle", f"Impossible de charger le modèle depuis '{path_custom}'.\nErreur: {e}")
             chemin_modele_a_tester = None
-            return # Retour pour ne pas continuer si erreur
+            return
             
     elif valeur_modele_base: 
-        print(f"DEBUG: valider_choix_modele - Option modèle de base '{valeur_modele_base}' choisie.")
         modele_spacy_selectionne_pour_ft = valeur_modele_base
-        chemin_modele_a_tester = None 
-        if verifier_et_telecharger_modele(modele_spacy_selectionne_pour_ft):
-            print(f"DEBUG: valider_choix_modele - Modèle de base {modele_spacy_selectionne_pour_ft} prêt.")
+        chemin_modele_a_tester = None
+        
+        # Utilisation de la fonction utilitaire de utils.py
+        resultat_verification = utils.verifier_existence_modele_spacy(modele_spacy_selectionne_pour_ft)
+        
+        modele_pret = False
+        if resultat_verification["status"] == "existe":
+            print(f"Le modèle '{modele_spacy_selectionne_pour_ft}' est déjà disponible.")
+            modele_pret = True
+        elif resultat_verification["status"] == "non_trouve":
+            reponse_dl = messagebox.askyesno("Modèle Non Trouvé", 
+                                          f"Le modèle '{modele_spacy_selectionne_pour_ft}' n'est pas trouvé. Voulez-vous le télécharger ?")
+            if reponse_dl:
+                status_label_dl = ttk.Label(cadre_choix_modele, text=f"Téléchargement de {modele_spacy_selectionne_pour_ft}...")
+                status_label_dl.pack(pady=2)
+                fenetre.update_idletasks()
+                
+                # Utilisation de la fonction utilitaire de utils.py pour le téléchargement
+                resultat_telechargement = utils.telecharger_modele_spacy(modele_spacy_selectionne_pour_ft, print) # print comme log_callback simple
+                
+                if status_label_dl.winfo_exists(): status_label_dl.destroy()
+
+                if resultat_telechargement["status"] == "telechargement_reussi":
+                    messagebox.showinfo("Téléchargement Réussi", f"Modèle '{modele_spacy_selectionne_pour_ft}' téléchargé.")
+                    modele_pret = True
+                else: # echec ou python_non_trouve
+                    messagebox.showerror("Erreur Téléchargement", f"Impossible de télécharger '{modele_spacy_selectionne_pour_ft}'.\nErreur: {resultat_telechargement.get('error', 'Inconnue')}")
+            else: # L'utilisateur a refusé le téléchargement
+                 messagebox.showinfo("Téléchargement Annulé", "Le téléchargement a été annulé.")
+        else: # Erreur de vérification
+            messagebox.showerror("Erreur Vérification Modèle", f"Erreur lors de la vérification du modèle: {resultat_verification.get('error', 'Inconnue')}")
+
+        if modele_pret:
             messagebox.showinfo("Modèle Prêt", f"Modèle de base : {modele_spacy_selectionne_pour_ft}\nPassez à la préparation des données.")
-            
             notebook.add(tab_preparation_donnees, text="Étape 2: Préparation Données")
             notebook.add(tab_fine_tuning, text="Étape 3: Fine-tuning Modèle")
             notebook.add(tab_test_modele, text="Étape 4: Test Modèle Fine-tuné")
             if not notebook.winfo_ismapped():
                  notebook.pack(padx=10, pady=10, fill="both", expand=True, anchor="n")
-            print("DEBUG: valider_choix_modele - Notebook (re)packé pour workflow complet.")
             
             notebook.tab(tab_preparation_donnees, state="normal")
             notebook.tab(tab_fine_tuning, state="disabled")
             notebook.tab(tab_test_modele, state="disabled")
             
             notebook.select(tab_preparation_donnees)
-            print("DEBUG: valider_choix_modele - Sélection de l'onglet Préparation Données.")
             activer_widgets_onglet_preparation(True)
             bouton_valider_modele.config(state="disabled")
-        # else: L'échec du téléchargement est géré dans verifier_et_telecharger_modele
+        else:
+            if notebook.winfo_ismapped(): notebook.pack_forget()
             
     else: 
-        messagebox.showwarning("Sélection Invalide", "Veuillez sélectionner une option de modèle valide dans la liste.")
-        if notebook.winfo_ismapped(): notebook.pack_forget() 
-    print("DEBUG: valider_choix_modele - FIN")
-
+        messagebox.showwarning("Sélection Invalide", "Veuillez sélectionner une option de modèle valide.")
+        if notebook.winfo_ismapped(): notebook.pack_forget()
 
 def verifier_et_telecharger_modele(nom_modele):
     # ... (Fonction inchangée)
@@ -400,26 +419,56 @@ def choisir_fichier_test_txt():
     if chemin_fichier: var_chemin_fichier_test.set(chemin_fichier); label_statut_test.config(text=f"Fichier: {os.path.basename(chemin_fichier)}")
 
 def lancer_test_pseudonymisation_gui():
-    # ... (Fonction inchangée)
     global chemin_modele_a_tester, mapping_pseudonymes_actuel 
+    
     path_fichier_test = var_chemin_fichier_test.get()
-    if not chemin_modele_a_tester: messagebox.showerror("Erreur", "Aucun modèle (fine-tuné ou existant) n'est prêt."); return
-    if not path_fichier_test or not os.path.exists(path_fichier_test): messagebox.showerror("Erreur", "Sélectionnez un fichier texte de test valide."); return
-    label_statut_test.config(text="Chargement du modèle..."); fenetre.update_idletasks()
+
+    if not chemin_modele_a_tester: # Le chemin est défini soit après fine-tuning, soit par sélection d'un modèle existant
+        messagebox.showerror("Erreur", "Aucun modèle n'est prêt pour le test. Entraînez ou sélectionnez un modèle existant.")
+        return
+    if not path_fichier_test or not os.path.exists(path_fichier_test): 
+        messagebox.showerror("Erreur", "Veuillez sélectionner un fichier texte de test valide.")
+        return
+
+    label_statut_test.config(text="Chargement du modèle...")
+    fenetre.update_idletasks()
+    
     try:
-        nlp_test = spacy.load(chemin_modele_a_tester)
-        label_statut_test.config(text="Lecture fichier test..."); fenetre.update_idletasks()
-        with open(path_fichier_test, 'r', encoding='utf-8') as f_test: texte_original_test = f_test.read()
-        label_statut_test.config(text="Pseudonymisation..."); fenetre.update_idletasks()
-        texte_pseudo, mapping = pseudonymiser_texte_pour_gui(nlp_test, texte_original_test)
-        if texte_pseudo is not None:
-            text_resultat_pseudo.config(state="normal"); text_resultat_pseudo.delete(1.0, tk.END); text_resultat_pseudo.insert(tk.END, texte_pseudo); text_resultat_pseudo.config(state="disabled")
+        nlp_test = spacy.load(chemin_modele_a_tester) # Le chemin_modele_a_tester est déjà validé
+        label_statut_test.config(text="Lecture du fichier de test...")
+        fenetre.update_idletasks()
+        
+        with open(path_fichier_test, 'r', encoding='utf-8') as f_test:
+            texte_original_test = f_test.read()
+        
+        label_statut_test.config(text="Pseudonymisation en cours...")
+        fenetre.update_idletasks()
+        
+        # Appel corrigé ici :
+        texte_pseudo, mapping = lp.pseudonymiser_texte(nlp_test, texte_original_test)
+        
+        if texte_pseudo is not None: # La fonction logique retourne (None, None) en cas d'erreur interne
+            text_resultat_pseudo.config(state="normal")
+            text_resultat_pseudo.delete(1.0, tk.END)
+            text_resultat_pseudo.insert(tk.END, texte_pseudo)
+            text_resultat_pseudo.config(state="disabled")
             label_statut_test.config(text="Pseudonymisation terminée.")
             mapping_pseudonymes_actuel = mapping 
-            bouton_sauvegarder_texte_pseudo.config(state="normal"); bouton_sauvegarder_mapping_pseudo.config(state="normal")
-        else: label_statut_test.config(text="Erreur pseudonymisation.")
-    except Exception as e: messagebox.showerror("Erreur Test", f"Erreur test : {e}"); label_statut_test.config(text=f"Erreur : {e}")
-
+            bouton_sauvegarder_texte_pseudo.config(state="normal")
+            bouton_sauvegarder_mapping_pseudo.config(state="normal")
+        else:
+            # Une erreur s'est produite dans la fonction logique (par exemple, modèle non fourni, bien que vérifié avant)
+            # Ou la fonction a retourné None explicitement pour une autre raison
+            label_statut_test.config(text="Erreur durant la pseudonymisation. Vérifiez la console.")
+            # Le message d'erreur spécifique aurait été printé par la fonction logique si nlp_model était None
+            
+    except Exception as e:
+        messagebox.showerror("Erreur Test", f"Une erreur est survenue lors du test : {e}")
+        label_statut_test.config(text=f"Erreur : {e}")
+        # Logguer aussi la trace complète dans la console pour débogage
+        import traceback
+        print("Traceback de l'erreur de test GUI:")
+        print(traceback.format_exc())
 def sauvegarder_texte_resultat():
     # ... (Fonction inchangée)
     texte_a_sauvegarder = text_resultat_pseudo.get(1.0, tk.END).strip()
