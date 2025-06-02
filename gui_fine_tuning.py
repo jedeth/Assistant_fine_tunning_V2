@@ -7,6 +7,8 @@ import os
 import re 
 import json
 import random
+import logique_preparation_donnees as lpd
+import logique_fine_tuning as lft 
 
 # --- Logique de Pseudonymisation ---
 def pseudonymiser_texte_pour_gui(nlp_model, texte_original):
@@ -26,104 +28,67 @@ def pseudonymiser_texte_pour_gui(nlp_model, texte_original):
     parts.append(texte_original[0:last_idx])
     return "".join(reversed(parts)), correspondances
 
-# --- Fonctions de préparation de données ---
-def lire_entites_depuis_fichier(chemin_fichier, log_callback=None):
-    entites = []
-    try:
-        with open(chemin_fichier, 'r', encoding='utf-8') as f:
-            for ligne in f:
-                entite_texte = ligne.strip()
-                if entite_texte: entites.append(entite_texte)
-        if not entites and log_callback: log_callback(f"A: Aucun contenu: {chemin_fichier}")
-        return entites
-    except FileNotFoundError:
-        msg = f"ERR: Fichier entités '{chemin_fichier}' introuvable."
-        if log_callback: log_callback(msg); return None
-        else: messagebox.showerror("Erreur Fichier", msg); return None
-    except Exception as e:
-        msg = f"ERR lecture entités '{chemin_fichier}': {e}"
-        if log_callback: log_callback(msg); return None
-        else: messagebox.showerror("Erreur Lecture", msg); return None
+def lancer_fine_tuning_gui():
+    global modele_spacy_selectionne_pour_ft, chemin_donnees_entrainement_final, chemin_modele_a_tester
+    
+    if not modele_spacy_selectionne_pour_ft:
+        messagebox.showerror("Erreur", "Aucun modèle SpaCy de base n'a été sélectionné pour le fine-tuning.")
+        return
+    if not chemin_donnees_entrainement_final or not os.path.exists(chemin_donnees_entrainement_final):
+        messagebox.showerror("Erreur", "Le fichier de données d'entraînement JSON n'a pas été généré ou est introuvable.")
+        return
 
-def lire_phrases_modeles_specifiques(chemin_fichier_phrases, placeholder_attendu, log_callback=None):
-    phrases = []
     try:
-        with open(chemin_fichier_phrases, 'r', encoding='utf-8') as f:
-            for ligne_num, ligne in enumerate(f, 1):
-                phrase_modele = ligne.strip()
-                if phrase_modele.startswith('"') and phrase_modele.endswith('",'): phrase_modele = phrase_modele[1:-2]
-                elif phrase_modele.startswith("'") and phrase_modele.endswith("',"): phrase_modele = phrase_modele[1:-2]
-                elif phrase_modele.startswith('"') and phrase_modele.endswith('"'): phrase_modele = phrase_modele[1:-1]
-                elif phrase_modele.startswith("'") and phrase_modele.endswith("'"): phrase_modele = phrase_modele[1:-1]
-                if phrase_modele and placeholder_attendu in phrase_modele: phrases.append(phrase_modele)
-                elif phrase_modele and log_callback: log_callback(f"L{ligne_num} ({os.path.basename(chemin_fichier_phrases)}): Placeholder '{placeholder_attendu}' manquant.")
-        if not phrases and log_callback: log_callback(f"A: Aucun modèle phrase pour '{placeholder_attendu}' dans : {os.path.basename(chemin_fichier_phrases)}")
-        return phrases
-    except FileNotFoundError:
-        msg = f"ERR: Fichier phrases '{chemin_fichier_phrases}' introuvable."
-        if log_callback: log_callback(msg); return None
-        else: messagebox.showerror("Erreur Fichier", msg); return None
-    except Exception as e:
-        msg = f"ERR lecture phrases '{chemin_fichier_phrases}': {e}"
-        if log_callback: log_callback(msg); return None
-        else: messagebox.showerror("Erreur Lecture", msg); return None
+        iterations = var_iterations.get()
+        dropout = var_dropout.get()
+        chemin_sauvegarde = var_chemin_sauvegarde_modele.get()
 
-def generer_donnees_pour_type(liste_entites, liste_phrases_modeles, label_entite, placeholder, log_callback=None):
-    donnees_entrainement = []
-    if not liste_entites or not liste_phrases_modeles:
-        if log_callback: log_callback(f"Données sources vides pour '{label_entite}'.")
-        return donnees_entrainement
-    for entite_texte in liste_entites:
-        for phrase_modele in liste_phrases_modeles:
-            phrase_formatee = phrase_modele.replace(placeholder, entite_texte)
-            match = re.search(re.escape(entite_texte), phrase_formatee)
-            if match:
-                debut, fin = match.span()
-                entite_spacy = (debut, fin, label_entite)
-                donnees_entrainement.append((phrase_formatee, {"entities": [entite_spacy]}))
-            elif log_callback:
-                log_callback(f"Entité '{entite_texte}' ({label_entite}) non trouvée.")
-    return donnees_entrainement
+        if iterations <= 0:
+            messagebox.showerror("Erreur de Configuration", "Le nombre d'itérations doit être supérieur à 0.")
+            return
+        if not (0.0 <= dropout <= 1.0): # Dropout est un float
+            messagebox.showerror("Erreur de Configuration", "Le taux de dropout doit être entre 0.0 et 1.0.")
+            return
+        if not chemin_sauvegarde:
+            messagebox.showerror("Erreur de Configuration", "Veuillez spécifier un dossier pour sauvegarder le modèle fine-tuné.")
+            return
+    except tk.TclError:
+        messagebox.showerror("Erreur de Configuration", "Veuillez entrer des valeurs numériques valides pour les itérations et le dropout.")
+        return
+    
+    log_message_fine_tuning(f"Préparation du fine-tuning...\nModèle: {modele_spacy_selectionne_pour_ft}, Données: {os.path.basename(chemin_donnees_entrainement_final)}, It: {iterations}, Drop: {dropout}, Sauvegarde: {chemin_sauvegarde}\n")
+    bouton_lancer_fine_tuning.config(state="disabled")
+    fenetre.update_idletasks() # Mettre à jour l'interface avant la tâche potentiellement longue
 
-def sauvegarder_donnees_json(donnees, chemin_fichier_sortie, log_callback=None):
-    if not donnees:
-        if log_callback: log_callback(f"Aucune donnée à sauvegarder pour '{chemin_fichier_sortie}'.")
-        return False
-    try:
-        with open(chemin_fichier_sortie, "w", encoding="utf-8") as outfile:
-            json.dump(donnees, outfile, ensure_ascii=False, indent=4)
-        if log_callback: log_callback(f"{len(donnees)} exemples sauvegardés: '{os.path.basename(chemin_fichier_sortie)}'")
-        return True
-    except Exception as e:
-        if log_callback: log_callback(f"ERR sauvegarde '{chemin_fichier_sortie}': {e}")
-        else: messagebox.showerror("Erreur Sauvegarde JSON", f"Erreur: {e}")
-        return False
+    # Appel de la fonction de logique externe  v
+    # Le callback log_message_fine_tuning mettra à jour text_log_fine_tuning dans le GUI
+    succes, chemin_modele_sauvegarde = lft.executer_fine_tuning(
+        nom_modele_base=modele_spacy_selectionne_pour_ft,
+        chemin_donnees_entrainement=chemin_donnees_entrainement_final,
+        chemin_sauvegarde_modele=chemin_sauvegarde,
+        iterations=iterations,
+        dropout_rate=dropout,
+        log_callback=log_message_fine_tuning # Passer la fonction de log de l'interface
+    )
 
-def charger_donnees_entrainement_json(chemin_fichier_json):
-    try:
-        with open(chemin_fichier_json, 'r', encoding='utf-8') as f: donnees_brutes = json.load(f)
-        if not isinstance(donnees_brutes, list): raise ValueError("JSON doit contenir une liste.")
-        donnees_formatees = []
-        for item in donnees_brutes:
-            if not (isinstance(item, (list, tuple)) and len(item) == 2): raise ValueError(f"Exemple invalide: {item}")
-            texte, annotations_dict = item
-            if not isinstance(texte, str): raise ValueError(f"Texte doit être str. Trouvé: {type(texte)}")
-            if not isinstance(annotations_dict, dict): raise ValueError(f"Annotations doit être dict. Trouvé: {type(annotations_dict)}")
-            entites_tuples = []
-            if "entities" in annotations_dict:
-                if not isinstance(annotations_dict["entities"], list): raise ValueError(f"'entities' doit être liste. Trouvé: {type(annotations_dict['entities'])}")
-                for ent_item in annotations_dict["entities"]:
-                    if not (isinstance(ent_item, (list, tuple)) and len(ent_item) == 3): raise ValueError(f"Entité invalide: {ent_item}")
-                    if not (isinstance(ent_item[0], int) and isinstance(ent_item[1], int)): raise ValueError(f"Indices entité non entiers: {ent_item[:2]}")
-                    if not isinstance(ent_item[2], str): raise ValueError(f"Label entité non str: {type(ent_item[2])}")
-                    entites_tuples.append(tuple(ent_item))
-            donnees_formatees.append((texte, {"entities": entites_tuples}))
-        if not donnees_formatees and donnees_brutes: messagebox.showwarning("Données Vides", f"Aucune donnée valide formatée depuis '{chemin_fichier_json}'."); return None
-        elif not donnees_formatees: messagebox.showwarning("Données Vides", f"'{chemin_fichier_json}' vide."); return None
-        return donnees_formatees
-    except FileNotFoundError: messagebox.showerror("Erreur Fichier JSON", f"Fichier '{chemin_fichier_json}' introuvable."); return None
-    except json.JSONDecodeError: messagebox.showerror("Erreur JSON", f"Fichier '{chemin_fichier_json}' n'est pas un JSON valide."); return None
-    except Exception as e: messagebox.showerror("Erreur Chargement JSON", f"Erreur chargement/formatage '{chemin_fichier_json}': {e}"); return None
+    bouton_lancer_fine_tuning.config(state="normal") # Réactiver le bouton après l'exécution
+
+    if succes and chemin_modele_sauvegarde:
+        messagebox.showinfo("Fine-tuning Terminé", f"Le modèle a été fine-tuné et sauvegardé dans\n{chemin_modele_sauvegarde}")
+        chemin_modele_a_tester = chemin_modele_sauvegarde # Mettre à jour pour l'étape de test
+        
+        # Activer et sélectionner l'onglet Test
+        try:
+            # S'assurer que l'onglet test existe avant de le configurer (au cas où il aurait été 'forgotten')
+            notebook.index(tab_test_modele) 
+        except tk.TclError: # Si l'onglet n'est pas connu (a été "forgotten" dans un autre scénario)
+            notebook.add(tab_test_modele, text="Étape 4: Test Modèle Fine-tuné") 
+        
+        notebook.tab(tab_test_modele, state="normal") 
+        notebook.select(tab_test_modele) 
+        activer_widgets_onglet_test(True) 
+    else:
+        messagebox.showerror("Erreur Fine-tuning", "Le fine-tuning a échoué. Consultez les logs pour plus de détails.")
 
 # Variables globales
 MODELES_SPACY_FR_BASE = {"Petit (sm)": "fr_core_news_sm", "Moyen (md)": "fr_core_news_md", "Grand (lg)": "fr_core_news_lg"}
@@ -257,44 +222,80 @@ def choisir_fichier_pour_config(type_entite_label, type_de_fichier, var_tk_path)
     if chemin: var_tk_path.set(chemin)
 
 def lancer_generation_donnees_gui():
-    # ... (Fonction inchangée)
     global chemin_donnees_entrainement_final
     log_message_preparation("Démarrage de la génération des données...")
     text_log_preparation.config(state="normal"); text_log_preparation.delete(1.0, tk.END); text_log_preparation.config(state="disabled") 
+    
     donnees_combinees = []
+    
     configs_entites_gui = [
         {"label": "PER", "placeholder_var": var_placeholder_per, "entites_var": var_entites_per, "phrases_var": var_phrases_per, "actif_var": var_actif_per},
         {"label": "LOC", "placeholder_var": var_placeholder_loc, "entites_var": var_entites_loc, "phrases_var": var_phrases_loc, "actif_var": var_actif_loc},
         {"label": "ORG", "placeholder_var": var_placeholder_org, "entites_var": var_entites_org, "phrases_var": var_phrases_org, "actif_var": var_actif_org},
     ]
+
     au_moins_un_type_genere = False
     for config in configs_entites_gui:
         if config["actif_var"].get():
-            label = config["label"]; placeholder = config["placeholder_var"].get(); chemin_entites = config["entites_var"].get(); chemin_phrases = config["phrases_var"].get()
-            if not all([placeholder, chemin_entites, chemin_phrases]): log_message_preparation(f"INFO: Infos manquantes pour {label}. Ignoré."); continue
-            log_message_preparation(f"\n--- Traitement : {label} ---")
-            entites = lire_entites_depuis_fichier(chemin_entites, log_message_preparation)
-            if entites is None or not entites: log_message_preparation(f"Pas d'entités pour {label}."); continue
-            phrases_modeles = lire_phrases_modeles_specifiques(chemin_phrases, placeholder, log_message_preparation)
-            if phrases_modeles is None or not phrases_modeles: log_message_preparation(f"Pas de phrases pour {label}."); continue
-            log_message_preparation(f"Génération pour {label}...")
-            donnees_generees = generer_donnees_pour_type(entites, phrases_modeles, label, placeholder, log_message_preparation)
-            if donnees_generees:
-                log_message_preparation(f"{len(donnees_generees)} exemples pour {label}.")
-                donnees_combinees.extend(donnees_generees); au_moins_un_type_genere = True
-            else: log_message_preparation(f"Aucune donnée générée pour {label}.")
-    if not donnees_combinees: messagebox.showwarning("Échec", "Aucune donnée d'entraînement générée."); log_message_preparation("Échec."); return
-    chemin_sauvegarde_combine = filedialog.asksaveasfilename(title="Sauvegarder données combinées", initialfile="donnees_entrainement_combinees.json", defaultextension=".json", filetypes=(("JSON", "*.json"),("Tous", "*.*")))
-    if chemin_sauvegarde_combine:
-        if sauvegarder_donnees_json(donnees_combinees, chemin_sauvegarde_combine, log_message_preparation):
-            chemin_donnees_entrainement_final = chemin_sauvegarde_combine
-            messagebox.showinfo("Succès", f"Données combinées: {chemin_donnees_entrainement_final}\nPassez à l'onglet 'Fine-tuning'.")
-            log_message_preparation(f"Terminé. Combiné: {chemin_donnees_entrainement_final}")
-            notebook.tab(tab_fine_tuning, state="normal"); notebook.select(tab_fine_tuning); activer_widgets_onglet_fine_tuning(True)
-            bouton_generer_donnees_gui.config(state="disabled") 
-        else: messagebox.showerror("Erreur", "Sauvegarde fichier combiné échouée."); log_message_preparation("Échec sauvegarde.")
-    else: log_message_preparation("Sauvegarde fichier combiné annulée.")
+            label = config["label"]
+            placeholder = config["placeholder_var"].get()
+            chemin_entites = config["entites_var"].get()
+            chemin_phrases = config["phrases_var"].get()
 
+            if not all([placeholder, chemin_entites, chemin_phrases]):
+                log_message_preparation(f"INFO: Infos manquantes pour le type {label}. Il sera ignoré.")
+                continue
+            
+            log_message_preparation(f"\n--- Traitement du type d'entité : {label} ---")
+            # Utilisation des fonctions importées avec l'alias lpd
+            entites = lpd.lire_entites_depuis_fichier(chemin_entites, log_message_preparation)
+            if entites is None or not entites: 
+                log_message_preparation(f"Pas d'entités chargées pour {label} depuis '{chemin_entites}'.")
+                continue
+            
+            phrases_modeles = lpd.lire_phrases_modeles_specifiques(chemin_phrases, placeholder, log_message_preparation)
+            if phrases_modeles is None or not phrases_modeles: 
+                log_message_preparation(f"Pas de phrases modèles chargées pour {label} depuis '{chemin_phrases}'.")
+                continue
+            
+            log_message_preparation(f"Génération pour {label}...")
+            donnees_generees = lpd.generer_donnees_pour_type(entites, phrases_modeles, label, placeholder, log_message_preparation)
+            
+            if donnees_generees:
+                log_message_preparation(f"{len(donnees_generees)} exemples générés pour {label}.")
+                donnees_combinees.extend(donnees_generees)
+                au_moins_un_type_genere = True
+            else:
+                log_message_preparation(f"Aucune donnée générée pour {label}.")
+
+    if not donnees_combinees:
+        messagebox.showwarning("Échec", "Aucune donnée d'entraînement n'a été générée au total. Vérifiez les configurations et les fichiers.")
+        log_message_preparation("Échec : Aucune donnée combinée générée.")
+        return
+
+    chemin_sauvegarde_combine = filedialog.asksaveasfilename(
+        title="Sauvegarder le fichier de données combinées",
+        initialfile="donnees_entrainement_combinees.json",
+        defaultextension=".json",
+        filetypes=(("Fichiers JSON", "*.json"), ("Tous", "*.*"))
+    )
+
+    if chemin_sauvegarde_combine:
+        # Utilisation de la fonction importée avec l'alias lpd
+        if lpd.sauvegarder_donnees_json(donnees_combinees, chemin_sauvegarde_combine, log_message_preparation):
+            chemin_donnees_entrainement_final = chemin_sauvegarde_combine
+            messagebox.showinfo("Succès", f"Données combinées sauvegardées dans :\n{chemin_donnees_entrainement_final}\nPassez à l'onglet 'Fine-tuning Modèle'.")
+            log_message_preparation(f"Terminé. Fichier combiné : {chemin_donnees_entrainement_final}")
+            
+            notebook.tab(tab_fine_tuning, state="normal")
+            notebook.select(tab_fine_tuning)
+            activer_widgets_onglet_fine_tuning(True)
+            bouton_generer_donnees_gui.config(state="disabled") 
+        else:
+            messagebox.showerror("Erreur", "La sauvegarde du fichier combiné a échoué.")
+            log_message_preparation("Échec de la sauvegarde du fichier combiné.")
+    else:
+        log_message_preparation("Sauvegarde du fichier combiné annulée.")
 def lancer_fine_tuning_gui():
     # ... (Fonction inchangée)
     global modele_spacy_selectionne_pour_ft, chemin_donnees_entrainement_final, chemin_modele_a_tester 
@@ -306,7 +307,7 @@ def lancer_fine_tuning_gui():
         if not (0.0 <= dropout <= 1.0): messagebox.showerror("Config Erreur", "Dropout entre 0.0 et 1.0."); return
         if not chemin_sauvegarde: messagebox.showerror("Config Erreur", "Spécifiez un dossier de sauvegarde."); return
     except tk.TclError: messagebox.showerror("Config Erreur", "Valeurs numériques valides pour itérations/dropout."); return
-    TRAIN_DATA = charger_donnees_entrainement_json(chemin_donnees_entrainement_final)
+    TRAIN_DATA = lft.charger_donnees_entrainement_json(chemin_donnees_entrainement_final, log_message_fine_tuning)
     if not TRAIN_DATA: log_message_fine_tuning("Échec chargement données. Vérifiez JSON et sa structure."); return
     log_message_fine_tuning("Fine-tuning démarré...\n" + f"Modèle: {modele_spacy_selectionne_pour_ft}, Données: {os.path.basename(chemin_donnees_entrainement_final)} ({len(TRAIN_DATA)} ex.), It: {iterations}, Drop: {dropout}, Sauvegarde: {chemin_sauvegarde}\n")
     bouton_lancer_fine_tuning.config(state="disabled"); fenetre.update_idletasks()
