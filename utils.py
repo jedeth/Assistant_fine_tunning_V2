@@ -1,5 +1,6 @@
 # utils.py
 
+import traceback
 import spacy
 import subprocess
 import os # Seulement si vous avez besoin de manipuler des chemins ici, sinon spacy.load suffit.
