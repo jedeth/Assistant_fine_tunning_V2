@@ -133,34 +133,102 @@ Certaines difficultés persistantes rythment le travail des rectorats :
 * Inégalités territoriales fortes entre académies (accès aux options, aux dispositifs de réussite…),
 * Besoin croissant d’adaptation pédagogique face à l’hétérogénéité des élèves.
 
-Asma	RAMDHANI
-Nino	SU
-Max	WITTERSHEIM
-Mohamed	TOUATI
-Théodore	TRACHSEL
-Valentin	Boissy-Pons
-Benjamin	MIEHAKANDA
-Charlie	ROUX
-Justin	MONTEILHET
-Mathilde	ROUDIER
-GABIN	BEAUGUITTE
-JULIA	BISIMWA MUTAPAYI
-GLOIRE	IBARA
-OUALID	EL HADIRI
-Mohamed Ali	SAIDANE
-MYRIAM	LIMAN
-CAMILA	MOHAMED
-Bertille	Pillon
-YACINE	MOSTEFAOUI
-CHLOE	SPINETTA
-GABIN	DE BACKER
-SEBASTIEN	NKUTU MANIMA
-Thomas	SE
-ZLATKO	STANOJEVIC
-FABRIZIO	NOUGA SIMO
-Clara	VAILLANT
-Kyeldan	SURMA VALTAER
-Eleana	Veliasi
-YASMINE	BENSELIM
-ANDREAS	MAUVE
-Korotoum	DRABO
+ntéressée par l’intelligence artificielle, Asma Ramdhani envisage une école d’ingénieur spécialisée dans ce domaine.
+
+Pour Nino Su, l’objectif est clair : intégrer une école d’arts appliqués afin de développer sa sensibilité créative.
+
+Passionné par l’aéronautique, Max Wittersheim vise une formation en ingénierie des systèmes embarqués.
+
+Une école de commerce, c’est le projet que Mohamed Touati poursuit avec détermination pour se lancer dans l’entrepreneuriat.
+
+Théodore Trachsel, lui, souhaite étudier la philosophie et se destine à l’enseignement supérieur.
+
+Cinéphile averti, Valentin Boissy-Pons prépare les concours d’écoles de réalisation audiovisuelle.
+
+Dans le monde du sport, Benjamin Miehakanda rêve de devenir préparateur physique via des études en STAPS.
+
+En mécatronique, Charlie Roux voit une voie d’avenir et prévoit un DUT pour s’y former.
+
+Justin Monteilhet prépare avec assiduité son dossier pour intégrer Sciences Po et se spécialiser en relations internationales.
+
+La médecine attire particulièrement Mathilde Roudier, qui postule en PASS dans plusieurs universités.
+
+Grâce à sa rigueur, Gabin Beauguitte ambitionne une carrière d’ingénieur en énergie renouvelable.
+
+Une passion pour le droit anime Julia Bisimwa Mutapayi, qui souhaite devenir avocate en droit international.
+
+Gloire Ibara oriente son projet vers une carrière en économie et envisage un cursus à l’université Paris-Dauphine.
+
+Attiré par les enjeux urbains, Oualid El Hadiri envisage une école d’architecture.
+
+En se dirigeant vers les sciences politiques, Mohamed Ali Saidane souhaite s’engager dans les affaires publiques.
+
+Myriam Liman, passionnée de biologie, espère intégrer une licence pour poursuivre en recherche médicale.
+
+Dans le domaine du commerce international, Camila Mohamed souhaite évoluer et construire une carrière à l’étranger.
+
+C’est dans le journalisme que Bertille Pillon se projette, avec l’ambition de faire entendre sa voix.
+
+Pour Yacine Mostefaoui, l’avenir passe par une école d’ingénieur en informatique.
+
+Chloé Spinetta, attirée par la psychologie, se prépare à entamer des études universitaires dans cette discipline.
+
+En intégrant une école d’arts dramatiques, Gabin De Backer poursuit son rêve de devenir comédien.
+
+Sébastien Nkutu Manima envisage une carrière dans les sciences de l’ingénieur, motivé par une curiosité technique forte.
+
+Passionné par les enjeux climatiques, Thomas Se s’oriente vers un cursus en géographie environnementale.
+
+Pour Zlatko Stanojevic, l’objectif est de devenir développeur et de maîtriser plusieurs langages de programmation.
+
+Fabrizio Nouga Simo, en quête de sens, projette de s’engager dans les métiers du social.
+
+Une passion pour la littérature pousse Clara Vaillant à vouloir poursuivre une licence en lettres modernes.
+
+C’est vers le design numérique que se tourne Kyeldan Surma Valtaer, avec de solides compétences en création graphique.
+
+Pour contribuer à la justice, Eleana Veliasi veut devenir magistrate et entame un parcours en droit.
+
+Yasmine Benselim se distingue par son goût des sciences et prévoit une orientation vers la chimie appliquée.
+
+Un projet humanitaire motive Andreas Mauve, qui vise un double diplôme en sciences sociales et coopération internationale.
+
+Dans le secteur de la santé, Korotoum Drabo souhaite devenir infirmière spécialisée.
+
+Ella Cinabre, passionnée par l’histoire de l’art, projette de travailler dans la conservation du patrimoine.
+
+L’économie est au cœur des ambitions de Céleste Saez Dumas, qui prépare les concours des grandes écoles.
+
+Max Mourey envisage une école d’ingénieur pour travailler dans l’automatisation industrielle.
+
+Déterminée à comprendre les mécanismes du cerveau, Mathilde Sibille choisit un cursus en neurosciences.
+
+Prudencia Touadé se passionne pour les relations internationales et postule à plusieurs universités à l’étranger.
+
+En se tournant vers la psychologie clinique, Maria Galuteau espère accompagner les adolescents en difficulté.
+
+Elias Attali, fasciné par les enjeux géopolitiques, souhaite intégrer un master en sciences politiques.
+
+Le droit des affaires est une évidence pour Cécilia Sun, qui vise une grande école de droit.
+
+Charles Amalfi envisage un avenir dans l’informatique, avec un intérêt marqué pour la cybersécurité.
+
+Dans la communication visuelle, Babacar Thiongane voit un moyen de s’exprimer et se spécialise en graphisme.
+
+Simona Spasova souhaite devenir traductrice professionnelle, maîtrisant déjà plusieurs langues européennes.
+
+Curieux et rigoureux, Idris Le Manchec souhaite devenir data analyst via un cursus en statistiques.
+
+Une école de cinéma attire Ilias Alakheir, qui rêve de devenir scénariste.
+
+Pour Gaspard Steffens, les sciences de la vie sont une vocation, avec pour ambition de travailler en biotechnologies.
+
+En se dirigeant vers une école d’ingénieur, Antoine Rouger souhaite contribuer aux innovations énergétiques.
+
+Dorsaff Kebsi est attirée par les sciences politiques et ambitionne de travailler dans les organisations internationales.
+
+Le métier de sage-femme attire Alice Duhamel, qui postule à des études en maïeutique.
+
+Envisageant une carrière de chef de projet informatique, Arnaud Stepanyan souhaite intégrer une école spécialisée.
+
+Passionné par la création musicale, Lenny Murte envisage un cursus en production sonore.
